@@ -283,6 +283,19 @@
             </Setter>
         </Style>
 
+        <!--
+            The composer's own row of chip buttons (Add, Active File, Selection, Model, Permission
+            mode, Effort, the slash-command palette) - a little bigger than a plain ChipButtonStyle
+            chip per Kaloyan's own live-tested request 2026-09-06 (see FontSizeComposerChip's own
+            comment in ChatTheme.xaml). Every other ChipButtonStyle consumer (the header's
+            transcript-mode button, popup menu items) is untouched.
+        -->
+        <Style x:Key="ComposerChipButtonStyle" TargetType="Button" BasedOn="{StaticResource ChipButtonStyle}">
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="FontSize" Value="{StaticResource FontSizeComposerChip}"/>
+            <Setter Property="Height" Value="27"/>
+        </Style>
+
         <!-- Full-width flat row button (command menu items) -->
         <Style x:Key="MenuRowButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
@@ -1850,11 +1863,11 @@
                         what it does instead and why.
                     -->
                     <Button x:Name="AddMenuButton" Click="OnAddMenuClicked"
-                            Style="{StaticResource ChipButtonStyle}" Margin="0,0,6,0" Padding="10,3"
+                            Style="{StaticResource ComposerChipButtonStyle}" Margin="0,0,6,0"
                             ToolTip="Add"
                             AutomationProperties.AutomationId="AddMenuButton"
                             AutomationProperties.Name="Add">
-                        <Path Data="{StaticResource Icon_Add}" Stretch="Uniform" Width="11" Height="11"
+                        <Path Data="{StaticResource Icon_Add}" Stretch="Uniform" Width="12" Height="12"
                               Fill="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
                     </Button>
                     <Popup x:Name="AddMenuPopup" PlacementTarget="{Binding ElementName=AddMenuButton}"
@@ -1929,11 +1942,11 @@
                     </Popup>
 
                     <Button Content="Active File" Click="OnAddActiveFileClicked"
-                            Style="{StaticResource ChipButtonStyle}" Margin="0,0,6,0"
+                            Style="{StaticResource ComposerChipButtonStyle}" Margin="0,0,6,0"
                             ToolTip="Insert a reference to the active file"
                             AutomationProperties.AutomationId="ActiveFileChipButton"/>
                     <Button Content="Selection" Click="OnAddSelectionClicked"
-                            Style="{StaticResource ChipButtonStyle}"
+                            Style="{StaticResource ComposerChipButtonStyle}"
                             ToolTip="Insert a reference to the current selection"
                             AutomationProperties.AutomationId="SelectionChipButton"/>
                 </StackPanel>
@@ -2146,31 +2159,31 @@
                     <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Left">
 
                     <!-- Command palette: usage summary + Account & Usage + slash commands -->
-                    <Button x:Name="PaletteButton" Style="{StaticResource ChipButtonStyle}"
+                    <Button x:Name="PaletteButton" Style="{StaticResource ComposerChipButtonStyle}"
                             Click="OnPaletteMenuClicked" Margin="0,0,4,0"
                             ToolTip="Usage, account &amp; commands"
                             AutomationProperties.AutomationId="PaletteButton"
                             AutomationProperties.Name="Usage, account and commands">
-                        <Path x:Name="ToolsIconPath" Stretch="Uniform" Width="11" Height="11"
+                        <Path x:Name="ToolsIconPath" Stretch="Uniform" Width="12" Height="12"
                               Fill="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
                     </Button>
 
                     <!-- Model -->
-                    <Button x:Name="ModelButton" Style="{StaticResource ChipButtonStyle}"
+                    <Button x:Name="ModelButton" Style="{StaticResource ComposerChipButtonStyle}"
                             Click="OnModelMenuClicked" Margin="0,0,4,0" ToolTip="Model"
                             AutomationProperties.AutomationId="ModelButton">
                         <TextBlock Text="{Binding SelectedModel.DisplayName}"/>
                     </Button>
 
                     <!-- Permission mode -->
-                    <Button x:Name="PermissionButton" Style="{StaticResource ChipButtonStyle}"
+                    <Button x:Name="PermissionButton" Style="{StaticResource ComposerChipButtonStyle}"
                             Click="OnPermissionMenuClicked" Margin="0,0,4,0" ToolTip="Permission mode"
                             AutomationProperties.AutomationId="PermissionButton">
                         <TextBlock Text="{Binding SelectedPermissionMode.DisplayName}"/>
                     </Button>
 
                     <!-- Effort -->
-                    <Button x:Name="EffortButton" Style="{StaticResource ChipButtonStyle}"
+                    <Button x:Name="EffortButton" Style="{StaticResource ComposerChipButtonStyle}"
                             Click="OnEffortMenuClicked" ToolTip="Thinking effort"
                             AutomationProperties.AutomationId="EffortButton">
                         <TextBlock Text="{Binding SelectedThinkingLevel.DisplayName}"/>
@@ -2185,7 +2198,7 @@
                         dequeued mid-turn, producing a confused reply instead of actually compacting)
                         - see docs/Phase 23.
                     -->
-                    <Button x:Name="ContextIndicatorButton" Style="{StaticResource ChipButtonStyle}"
+                    <Button x:Name="ContextIndicatorButton" Style="{StaticResource ComposerChipButtonStyle}"
                             Click="OnContextIndicatorClicked" Margin="4,0,0,0"
                             IsEnabled="{Binding CanCompact}"
                             ToolTip="{Binding ContextButtonTooltip}"

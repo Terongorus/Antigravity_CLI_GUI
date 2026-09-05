@@ -66,6 +66,16 @@
     <sys:Double x:Key="FontSizeChrome">11</sys:Double>
 
     <!--
+        Deliberate exception to the two-size rule above: Kaloyan's own live-tested preference
+        2026-09-06, not a baseline-parity measurement - the composer's row of chip buttons (Add,
+        Active File, Selection, Model, Permission mode, Effort, the slash-command palette) read as
+        slightly too small/cramped next to the rest of the composer. Scoped to
+        ComposerChipButtonStyle only, in ClaudeCodeChatControl.xaml - every OTHER ChipButtonStyle
+        consumer (the header's transcript-mode button, popup menu items) is unaffected.
+    -->
+    <sys:Double x:Key="FontSizeComposerChip">12</sys:Double>
+
+    <!--
         Glyph metrics. These are NOT part of the type scale: they size icon characters
         (arrows, crosses, the search lens) inside fixed-size buttons, so they are geometry that
         happens to be expressed in points. Kept separate so the two-size rule above stays honest.
