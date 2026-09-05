@@ -885,14 +885,25 @@ namespace TeronClaudeCodeVS.ViewModels
             if (text.Length > 0)
                 userMessage.Blocks.Add(new TextBlockViewModel { Text = text });
             Messages.Add(userMessage);
-            _pendingUserMessages.Enqueue(userMessage);
 
             // See _turnContinuedMidStream: a turn already streaming must not keep growing the
-            // entry that sits above the message just sent.
+            // entry that sits above the message just sent. This message is being absorbed into
+            // that SAME still-running turn (confirmed live 2026-09-06: the CLI's real "result" for
+            // such a turn covers everything, with no separate result of its own for a message sent
+            // mid-stream) - it will never start a genuinely new turn of its own, so it must NOT go
+            // into _pendingUserMessages. Found live the same day: enqueuing it anyway left a stale
+            // entry there that nothing ever dequeued, and a LATER, wholly unrelated message's own
+            // new turn dequeued that leftover instead of itself - inserting that turn's real
+            // response right after the stale message, nowhere near where the user was looking,
+            // which read as "sent a message, got no response" for every message after the first.
             if (_currentAssistantMessage != null)
             {
                 _currentAssistantMessage = null;
                 _turnContinuedMidStream = true;
+            }
+            else
+            {
+                _pendingUserMessages.Enqueue(userMessage);
             }
 
             // Record the first message as the session title.
