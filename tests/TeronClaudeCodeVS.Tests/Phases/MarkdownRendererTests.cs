@@ -97,6 +97,18 @@ namespace TeronClaudeCodeVS.Tests.Phases
 
                 // Each section is header paragraph + content paragraph.
                 Assert.All(codeSections, s => Assert.Equal(2, s.Blocks.Count));
+
+                // Found live 2026-09-06: the Section's own Background matched, but the content
+                // Paragraph inside it (Blocks[1]) was left on Markdig.Wpf's own light default -
+                // ClearValue on it did not reliably fall through to showing the Section's fill
+                // underneath, so the body read as a light box under a correctly-dark header. The
+                // content paragraph must carry the exact same brush as its Section, not merely a
+                // cleared/absent one.
+                Assert.All(codeSections, s =>
+                {
+                    var contentPara = Assert.IsType<Paragraph>(s.Blocks.ElementAt(1));
+                    Assert.Equal(((SolidColorBrush)s.Background).Color, ((SolidColorBrush)contentPara.Background).Color);
+                });
             });
         }
 

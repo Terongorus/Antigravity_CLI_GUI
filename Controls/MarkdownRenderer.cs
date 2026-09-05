@@ -239,7 +239,13 @@ namespace TeronClaudeCodeVS.Controls
                     blocks.InsertBefore(codePara, section);
                     blocks.Remove(codePara);
 
-                    codePara.ClearValue(TextElement.BackgroundProperty);
+                    // Painted with the exact same brush as the Section around it, not cleared to
+                    // fall through to it - found live 2026-09-06 still showing Markdig.Wpf's own
+                    // light default even after this same brush visibly took effect on the header
+                    // (a plain Border built fresh, nowhere near Markdig.Wpf's renderer). Whatever
+                    // "cleared" was actually resolving to for this specific paragraph, painting it
+                    // explicitly removes the ambiguity instead of relying on it.
+                    codePara.Background = GetCodeBlockBackground();
                     codePara.BorderThickness = new Thickness(0);
                     codePara.Margin = new Thickness(10, 6, 10, 10);
 
