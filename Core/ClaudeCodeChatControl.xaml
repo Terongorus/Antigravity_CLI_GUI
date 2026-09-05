@@ -552,7 +552,7 @@
         </DataTemplate>
 
         <DataTemplate x:Key="ImageAttachmentTemplate" DataType="{x:Type vm:ImageAttachmentViewModel}">
-            <Border CornerRadius="{StaticResource RadiusCard}" Margin="0,0,0,6" MaxWidth="260" ClipToBounds="True"
+            <Border CornerRadius="{StaticResource RadiusCard}" Margin="0,0,6,6" MaxWidth="260" ClipToBounds="True"
                     Cursor="Hand" ToolTip="Open full size">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding OpenCommand}"/>
@@ -562,7 +562,7 @@
         </DataTemplate>
 
         <DataTemplate x:Key="FileAttachmentTemplate" DataType="{x:Type vm:FileAttachmentViewModel}">
-            <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,0,6" Padding="6,3" Background="{StaticResource CardBackgroundBrush}"
+            <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,6,6" Padding="6,3" Background="{StaticResource CardBackgroundBrush}"
                     Cursor="Hand" ToolTip="Open">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding OpenCommand}"/>
@@ -574,28 +574,26 @@
             </Border>
         </DataTemplate>
 
+        <!--
+            Plain Border + MouseBinding, matching FileAttachmentTemplate exactly - deliberately NOT
+            a Button with its own IsMouseOver-triggered background, which is what this replaced.
+            That version could render visibly lighter/greyer than the file chip right next to it
+            (flagged live 2026-09-05, most likely a stuck hover-visual-state after the click's
+            OpenCommand shifted focus into a VS editor window without a normal MouseLeave ever
+            firing on the button). A plain Border has no hover-triggered visual state to get stuck
+            in, so it can't diverge from FileAttachmentTemplate's own fill either.
+        -->
         <DataTemplate x:Key="CodeReferenceAttachmentTemplate" DataType="{x:Type vm:CodeReferenceAttachmentViewModel}">
-            <Button Command="{Binding OpenCommand}" Cursor="Hand"
-                    ToolTip="Open in the editor"
-                    AutomationProperties.Name="{Binding Title}">
-                <Button.Template>
-                    <ControlTemplate TargetType="Button">
-                        <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,0,6" Padding="6,3"
-                                Background="{StaticResource CardBackgroundBrush}" x:Name="Bd">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&lt;/&gt;" FontFamily="Consolas" Margin="0,0,5,0"/>
-                                <TextBlock Text="{Binding Title}" FontSize="{StaticResource FontSizeBody}"
-                                           TextDecorations="Underline"/>
-                            </StackPanel>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverBrush}"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Button.Template>
-            </Button>
+            <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,6,6" Padding="6,3" Background="{StaticResource CardBackgroundBrush}"
+                    Cursor="Hand" ToolTip="Open in the editor">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding OpenCommand}"/>
+                </Border.InputBindings>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&lt;/&gt;" FontFamily="Consolas" Margin="0,0,5,0"/>
+                    <TextBlock Text="{Binding Title}" FontSize="{StaticResource FontSizeBody}" TextDecorations="Underline"/>
+                </StackPanel>
+            </Border>
         </DataTemplate>
 
         <DataTemplate x:Key="ThinkingBlockTemplate" DataType="{x:Type vm:ThinkingBlockViewModel}">
@@ -1133,7 +1131,23 @@
                         TextElement.Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"
                         CornerRadius="10,10,2,10" Padding="10,6"
                         MaxWidth="460">
-                    <ItemsControl ItemsSource="{Binding Blocks}" ItemTemplateSelector="{StaticResource BlockTemplateSelector}"/>
+                    <StackPanel>
+                        <!--
+                            Image/file/code-reference attachments wrap in their own horizontal row,
+                            matching the composer's own staging chips and GitHub Copilot Chat's sent
+                            messages - a single ItemsControl over the whole Blocks list stacks every
+                            attachment on its own full-width row instead, which is what this replaces
+                            (flagged live 2026-09-05 as taking up far too much vertical space).
+                        -->
+                        <ItemsControl ItemsSource="{Binding AttachmentBlocks}" ItemTemplateSelector="{StaticResource BlockTemplateSelector}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                        <ItemsControl ItemsSource="{Binding NonAttachmentBlocks}" ItemTemplateSelector="{StaticResource BlockTemplateSelector}"/>
+                    </StackPanel>
                 </Border>
             </Grid>
             <DataTemplate.Triggers>

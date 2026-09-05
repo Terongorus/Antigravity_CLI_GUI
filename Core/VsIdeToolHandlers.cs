@@ -290,6 +290,70 @@ namespace TeronClaudeCodeVS.Core
             textView.ViewScroller.EnsureSpanVisible(span);
         }
 
+        /// <summary>
+        /// GitHub Copilot Chat's "Insert at Cursor" action on a generated code block - replaces the
+        /// active editor's current selection with the block's own text, or inserts it at the caret
+        /// when there is no selection. Best-effort like every other editor action in this file:
+        /// false with no active editor rather than throwing, since a stale code block in an old
+        /// message can easily be clicked with no editor focused at all.
+        /// </summary>
+        internal static async Task<bool> InsertAtCursorAsync(string code)
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            var docView = await VS.Documents.GetActiveDocumentViewAsync();
+            var textView = docView?.TextView;
+            if (textView == null) return false;
+
+            var selection = textView.Selection;
+            var buffer = textView.TextBuffer;
+            if (!selection.IsEmpty)
+                buffer.Replace(selection.SelectedSpans[0], code);
+            else
+                buffer.Insert(textView.Caret.Position.BufferPosition.Position, code);
+
+            return true;
+        }
+
+        /// <summary>
+        /// GitHub Copilot Chat's "Insert in New File" action - opens a brand-new, unsaved text
+        /// buffer (the same one File > New File would) and seeds it with the block's text, leaving
+        /// naming/location to a normal Save As rather than guessing a path.
+        /// </summary>
+        internal static async Task<bool> InsertInNewFileAsync(string code)
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            if (Package.GetGlobalService(typeof(SDTE)) is not DTE2 dte) return false;
+            dte.ItemOperations.NewFile(@"General\Text File");
+
+            var docView = await VS.Documents.GetActiveDocumentViewAsync();
+            if (docView?.TextBuffer == null) return false;
+
+            docView.TextBuffer.Insert(0, code);
+            return true;
+        }
+
+        /// <summary>
+        /// GitHub Copilot Chat's "Apply in Active Document" action - replaces the ENTIRE contents
+        /// of whichever document currently has focus with the block's text. Deliberately as literal
+        /// as the baseline button itself: no diff/merge intelligence, just a full-buffer replace the
+        /// user can Ctrl+Z out of, exactly like Copilot's own button does to whatever file happens
+        /// to be active.
+        /// </summary>
+        internal static async Task<bool> ApplyInActiveDocumentAsync(string code)
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            var docView = await VS.Documents.GetActiveDocumentViewAsync();
+            var buffer = docView?.TextBuffer;
+            if (buffer == null) return false;
+
+            var snapshot = buffer.CurrentSnapshot;
+            buffer.Replace(new SnapshotSpan(snapshot, 0, snapshot.Length), code);
+            return true;
+        }
+
         public async Task<JObject> CloseTabAsync(string tabName)
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -68,6 +69,8 @@ namespace TeronClaudeCodeVS.ViewModels
             }
 
             RefreshToolCallSummary();
+            OnPropertyChanged(nameof(AttachmentBlocks));
+            OnPropertyChanged(nameof(NonAttachmentBlocks));
         }
 
         private void OnToolCallPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -96,5 +99,22 @@ namespace TeronClaudeCodeVS.ViewModels
         /// <summary>UX-7: true when a failure is included in the count, so the view can colour it.</summary>
         public bool HasToolCallFailure =>
             Blocks.OfType<ToolCallViewModel>().Any(c => c.Status == ToolCallStatus.Error);
+
+        // ─── Attachment/text split for the sent-message bubble ────────────────────
+
+        /// <summary>
+        /// UX: a sent message's image/file/code-reference attachments render in their own
+        /// horizontal, wrapping row - matching how the composer stages them and how GitHub Copilot
+        /// Chat lays out a sent message - rather than one full-width block per attachment stacked
+        /// vertically, which is what a single <see cref="Blocks"/>-bound ItemsControl produces by
+        /// default. Flagged live 2026-09-05 as taking up far too much vertical space.
+        /// </summary>
+        public IEnumerable<ContentBlockViewModel> AttachmentBlocks => Blocks.Where(IsAttachment);
+
+        /// <summary>Everything in <see cref="Blocks"/> that is not one of the wrapped attachment kinds above.</summary>
+        public IEnumerable<ContentBlockViewModel> NonAttachmentBlocks => Blocks.Where(b => !IsAttachment(b));
+
+        private static bool IsAttachment(ContentBlockViewModel block) =>
+            block is ImageAttachmentViewModel or FileAttachmentViewModel or CodeReferenceAttachmentViewModel;
     }
 }

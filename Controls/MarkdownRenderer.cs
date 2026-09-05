@@ -7,6 +7,7 @@ using System.IO;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Markup;
 using System.Windows.Media;
@@ -25,8 +26,9 @@ namespace TeronClaudeCodeVS.Controls
                 .UseEmojiAndSmiley()
                 .Build();
 
-        // Card background for a fenced code block - inline `code` spans keep this same tint too.
-        // Went through two revisions on 2026-09-05: first just bumping a neutral grey's alpha
+        // Card background for an INLINE `code` span only (a word or two sitting in the middle of a
+        // prose line) - not the fenced-code-block chrome, see GetCodeBlockBackground for that. Went
+        // through two revisions on 2026-09-05: first just bumping a neutral grey's alpha
         // (0x18 -> 0x40), which fixed "barely visible" but was called out live as still the wrong
         // idea - a shade/alpha tweak on a neutral tone reads as a washed-out chip either way, not
         // something that actually stands out. Switched to the app's own accent hue (ChatTheme.xaml's
@@ -34,15 +36,32 @@ namespace TeronClaudeCodeVS.Controls
         // reachable from this static, no-visual-tree renderer) at low alpha - alpha-blending over
         // whatever the real background is keeps the "never needs a separate light/dark value"
         // property, but a warm, branded tint reads as an intentional highlight on both VS light and
-        // dark instead of a generic grey box.
+        // dark instead of a generic grey box. A subtle translucent tint like this is fine for a
+        // couple of inline words; see GetCodeBlockBackground for why it reads as broken chrome once
+        // it is the fill for an entire multi-line block instead.
         private static readonly SolidColorBrush s_codeBg = Frozen(Color.FromArgb(0x33, 0xD9, 0x77, 0x57));
 
-        // The header strip needs to read as visibly distinct from the body beneath it (see the
-        // GitHub Copilot Chat reference screenshots) - same hue, stronger alpha, so it visually
-        // deepens where it's painted over the section's own s_codeBg rather than introducing a
-        // second hardcoded color that would need its own light/dark justification.
-        private static readonly SolidColorBrush s_codeHeaderBg = Frozen(Color.FromArgb(0x50, 0xD9, 0x77, 0x57));
         private static readonly SolidColorBrush s_codeBorderBrush = Frozen(Color.FromArgb(0x40, 0x80, 0x80, 0x80));
+
+        // Fallback for a fenced code block's header+body fill when the real VS editor background
+        // isn't reachable (the xUnit tests' fake package-less environment - never a real run).
+        // Neutral, not accent-tinted, since it is never actually seen live.
+        private static readonly SolidColorBrush s_codeBlockBgFallback = Frozen(Color.FromArgb(0x20, 0x80, 0x80, 0x80));
+
+        /// <summary>
+        /// The fill for BOTH the header strip and the body of a fenced code block - the real VS
+        /// code editor's own background (see <see cref="Core.ClaudeCodePackage.GetEditorBackground"/>),
+        /// not a hand-picked or accent-tinted color. Called out live 2026-09-05 as looking worse
+        /// than the plain highlight it replaced: a translucent accent tint that works fine for a
+        /// couple of inline words (s_codeBg) reads as a washed-out, oddly-colored box once it is the
+        /// fill for an entire multi-line block, especially layered under a second, stronger-alpha
+        /// tint for the header - two different colored bands where GitHub Copilot Chat's own
+        /// reference screenshots show one flat, real editor surface with only a thin divider line
+        /// under the header. Header and body deliberately share this exact same brush now; that
+        /// divider (BuildCodeHeader's own bottom border) is the only seam between them.
+        /// </summary>
+        private static Brush GetCodeBlockBackground() =>
+            Core.ClaudeCodePackage.Instance?.GetEditorBackground() ?? s_codeBlockBgFallback;
         private static readonly FontFamily s_inlineCodeFont = new("Consolas");
 
         // Diff line colors (same hues as GitHub's diff view).
@@ -195,7 +214,7 @@ namespace TeronClaudeCodeVS.Controls
 
                     Section section = new()
                     {
-                        Background = s_codeBg,
+                        Background = GetCodeBlockBackground(),
                         BorderBrush = s_codeBorderBrush,
                         BorderThickness = new Thickness(1),
                         Margin = codePara.Margin,
@@ -228,7 +247,7 @@ namespace TeronClaudeCodeVS.Controls
 
                 case Section section:
                     if (IsLightBackground(section.Background))
-                        section.Background = s_codeBg;
+                        section.Background = GetCodeBlockBackground();
                     if (IsBlackForeground(section.Foreground))
                         section.ClearValue(TextElement.ForegroundProperty);
                     WalkBlocks(section.Blocks, ctx);
@@ -325,9 +344,9 @@ namespace TeronClaudeCodeVS.Controls
         /// <summary>
         /// Builds the strip above a code block's body: the language name, or - when this block is
         /// about one specific file (an Edit's diff, a Write's new content) - that file's name as a
-        /// clickable link that opens it in the real editor, plus a copy button on the right. Modeled
-        /// on GitHub Copilot Chat's own code-block header rather than the plain floating corner
-        /// button this replaced (see docs/Phase 24).
+        /// clickable link that opens it in the real editor, plus the editor-actions dropdown and
+        /// copy button on the right. Modeled on GitHub Copilot Chat's own code-block header rather
+        /// than the plain floating corner button this replaced (see docs/Phase 24).
         /// </summary>
         private static Paragraph BuildCodeHeader(string? language, string? filePath, string code)
         {
@@ -335,7 +354,7 @@ namespace TeronClaudeCodeVS.Controls
             {
                 Margin = new Thickness(0),
                 Padding = new Thickness(10, 5, 6, 5),
-                Background = s_codeHeaderBg,
+                Background = GetCodeBlockBackground(),
                 BorderBrush = s_codeBorderBrush,
                 BorderThickness = new Thickness(0, 0, 0, 1),
                 FontSize = 11,
@@ -359,11 +378,78 @@ namespace TeronClaudeCodeVS.Controls
                 header.Inlines.Add(new Run(string.IsNullOrEmpty(language) ? "text" : language!));
             }
 
-            header.Inlines.Add(BuildCopyFloater(code));
+            header.Inlines.Add(BuildHeaderActionsFloater(code));
             return header;
         }
 
-        private static Floater BuildCopyFloater(string code)
+        /// <summary>
+        /// The header's right-hand side: GitHub Copilot Chat's "Insert at Cursor" dropdown (Insert
+        /// at Cursor / Insert in New File / Apply in Active Document - see
+        /// <see cref="Core.VsIdeToolHandlers"/> for what each one actually does) plus the existing
+        /// copy button, both in ONE Floater. Deliberately one floater with an internal
+        /// StackPanel rather than two separate right-aligned Floaters: FlowDocument's own stacking
+        /// order for multiple same-side floaters isn't something this static, no-visual-tree
+        /// renderer can verify without a live layout pass, so a plain StackPanel is used to
+        /// guarantee the left-to-right order instead of trusting it.
+        /// </summary>
+        private static Floater BuildHeaderActionsFloater(string code)
+        {
+            Button insertButton = new()
+            {
+                Content = "Insert at Cursor ▾",
+                FontSize = 11,
+                Padding = new Thickness(8, 2, 8, 2),
+                Margin = new Thickness(0, 0, 4, 0),
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(1),
+                BorderBrush = s_codeBorderBrush,
+                Cursor = System.Windows.Input.Cursors.Hand,
+                Opacity = 0.85,
+                ToolTip = "Insert, apply, or open this code in the editor",
+                Focusable = false,
+            };
+            insertButton.SetResourceReference(Control.ForegroundProperty,
+                Microsoft.VisualStudio.Shell.VsBrushes.ToolWindowTextKey);
+            insertButton.MouseEnter += (_, __) => { insertButton.Opacity = 1.0; insertButton.Background = s_codeBorderBrush; };
+            insertButton.MouseLeave += (_, __) => { insertButton.Opacity = 0.85; insertButton.Background = Brushes.Transparent; };
+
+            ContextMenu menu = new() { PlacementTarget = insertButton, Placement = PlacementMode.Bottom };
+            menu.Items.Add(BuildHeaderActionMenuItem("Insert at Cursor",
+                () => _ = Core.VsIdeToolHandlers.InsertAtCursorAsync(code)));
+            menu.Items.Add(BuildHeaderActionMenuItem("Insert in New File",
+                () => _ = Core.VsIdeToolHandlers.InsertInNewFileAsync(code)));
+            menu.Items.Add(BuildHeaderActionMenuItem("Apply in Active Document",
+                () => _ = Core.VsIdeToolHandlers.ApplyInActiveDocumentAsync(code)));
+            insertButton.Click += (_, __) => menu.IsOpen = true;
+
+            Button copyButton = BuildCopyButton(code);
+
+            StackPanel actions = new() { Orientation = Orientation.Horizontal };
+            actions.Children.Add(insertButton);
+            actions.Children.Add(copyButton);
+
+            return new Floater(new BlockUIContainer(actions)
+            {
+                Margin = new Thickness(0),
+                Padding = new Thickness(0),
+            })
+            {
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Width = 150,
+                Margin = new Thickness(0),
+                Padding = new Thickness(0),
+                BorderThickness = new Thickness(0),
+            };
+        }
+
+        private static MenuItem BuildHeaderActionMenuItem(string text, Action action)
+        {
+            MenuItem item = new() { Header = text };
+            item.Click += (_, __) => action();
+            return item;
+        }
+
+        private static Button BuildCopyButton(string code)
         {
             Button button = new()
             {
@@ -389,18 +475,7 @@ namespace TeronClaudeCodeVS.Controls
             button.MouseLeave += (_, __) => { button.Opacity = 0.7; button.Background = Brushes.Transparent; };
             button.Click += (_, __) => CopyToClipboard(button, code);
 
-            return new Floater(new BlockUIContainer(button)
-            {
-                Margin = new Thickness(0),
-                Padding = new Thickness(0),
-            })
-            {
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Width = 28,
-                Margin = new Thickness(0),
-                Padding = new Thickness(0),
-                BorderThickness = new Thickness(0),
-            };
+            return button;
         }
 
         private static void CopyToClipboard(Button button, string code)
@@ -532,11 +607,14 @@ namespace TeronClaudeCodeVS.Controls
             inlines.Remove(run);
         }
 
-        // A plain word.ext shape, no "@" required and no path separators - just enough to find a
-        // candidate. Loose on purpose: real precision comes from checking the candidate against
-        // the actual project index below, not from the regex.
+        // A plain word.ext shape, optionally preceded by its own directory segments
+        // ("TestConsoleApp\Program.cs", not just "Program.cs") so a mention that already carries
+        // folder context isn't truncated down to the bare leaf name before it ever reaches the
+        // index lookup below. Lookaround instead of \b at the edges: \b can't sit in front of a
+        // segment starting with '.' (".vscode\launch.json") because '.' isn't a word character,
+        // so the transition from whitespace to '.' is not a word boundary at all.
         private static readonly Regex s_bareFileNamePattern = new(
-            @"\b(?<name>[A-Za-z0-9_\-]+\.[A-Za-z0-9]{1,10})\b",
+            @"(?<![\w.\\/-])(?<name>(?:[A-Za-z0-9_.\-]+[\\/])*[A-Za-z0-9_\-]+\.[A-Za-z0-9]{1,10})(?![\w.\\/-])",
             RegexOptions.Compiled);
 
         /// <summary>
@@ -544,13 +622,24 @@ namespace TeronClaudeCodeVS.Controls
         /// ClaudeCodePackage.cs...") against the real, currently-indexed project files - not just
         /// the user-typed "@path" mentions <see cref="LinkifyFileReferences"/> handles. Requested
         /// live 2026-09-05 after a GitHub Copilot Chat comparison screenshot showed exactly this.
-        /// Deliberately conservative: a candidate word only becomes a link if its filename exactly
-        /// matches (case-insensitive) a real file already discovered by the composer's own
-        /// "@"-mention index (<see cref="Core.ClaudeCodePackage.IndexedProjectFiles"/>) - a version
-        /// number, "e.g.", or a filename Claude invented that isn't actually in this workspace is
-        /// left as plain text rather than risking a dead or wrong link. Runs strictly after
-        /// LinkifyFileReferences and re-queries Inlines fresh, so an already-linked "@path" mention
-        /// (now a Hyperlink, not a Run) can never be double-processed.
+        /// Deliberately conservative: a candidate word only becomes a link if it resolves to
+        /// exactly one real file already discovered by the composer's own "@"-mention index (<see
+        /// cref="Core.ClaudeCodePackage.IndexedProjectFiles"/>) - a version number, "e.g.", or a
+        /// filename Claude invented that isn't actually in this workspace is left as plain text
+        /// rather than risking a dead or wrong link. Runs strictly after LinkifyFileReferences and
+        /// re-queries Inlines fresh, so an already-linked "@path" mention (now a Hyperlink, not a
+        /// Run) can never be double-processed.
+        /// <para>
+        /// Two projects can genuinely have a same-named file in different folders (two
+        /// Program.cs) - found live 2026-09-05 when a workspace listing mentioned both
+        /// "TestConsoleApp\Program.cs" and "TestProjectClaude2\Program.cs" and only the first one
+        /// in <see cref="Core.ClaudeCodePackage.IndexedProjectFiles"/> ever got linked, silently
+        /// pointing BOTH mentions at the same file. A candidate that carries its own directory
+        /// segments is now matched against that whole relative tail instead of just the leaf name;
+        /// a bare leaf mention with no folder context still only links when it is unique across
+        /// the project, and is left as plain text rather than guessing which of several
+        /// same-named files it means.
+        /// </para>
         /// </summary>
         private static void LinkifyBareFilenames(Paragraph para)
         {
@@ -577,8 +666,7 @@ namespace TeronClaudeCodeVS.Controls
             foreach (Match m in matches)
             {
                 string candidate = m.Groups["name"].Value;
-                string? fullPath = indexedFiles.FirstOrDefault(f =>
-                    string.Equals(Path.GetFileName(f), candidate, StringComparison.OrdinalIgnoreCase));
+                string? fullPath = ResolveIndexedFile(candidate, indexedFiles);
                 if (fullPath == null) continue;
 
                 if (m.Index > last)
@@ -598,6 +686,45 @@ namespace TeronClaudeCodeVS.Controls
                 inlines.InsertAfter(anchor, new Run(text.Substring(last)));
 
             inlines.Remove(run);
+        }
+
+        /// <summary>
+        /// Resolves a bare-filename candidate against the real project index. A candidate that
+        /// carries its own directory segments ("TestConsoleApp\Program.cs") is matched against the
+        /// whole relative tail of each indexed path, not just the leaf name, so two files sharing a
+        /// name in different folders resolve independently. A bare leaf name with no folder context
+        /// only resolves when it is unique across the project - ambiguous either way means no link,
+        /// never a guess.
+        /// </summary>
+        private static string? ResolveIndexedFile(string candidate, string[] indexedFiles)
+        {
+            if (candidate.IndexOfAny(['\\', '/']) >= 0)
+            {
+                string[] pathMatches = [.. indexedFiles.Where(f => PathEndsWithSegments(f, candidate))];
+                return pathMatches.Length == 1 ? pathMatches[0] : null;
+            }
+
+            string[] leafMatches = [.. indexedFiles.Where(f =>
+                string.Equals(Path.GetFileName(f), candidate, StringComparison.OrdinalIgnoreCase))];
+            return leafMatches.Length == 1 ? leafMatches[0] : null;
+        }
+
+        /// <summary>
+        /// True when <paramref name="fullPath"/>'s own directory segments end with
+        /// <paramref name="candidate"/>'s, e.g. "...\TestConsoleApp\Program.cs" against
+        /// "TestConsoleApp\Program.cs". A plain string.EndsWith would also true-positive on
+        /// "...\OtherTestConsoleApp\Program.cs" - guarded against by requiring the character right
+        /// before the match to be a path separator, or the match to consume the whole path.
+        /// </summary>
+        private static bool PathEndsWithSegments(string fullPath, string candidate)
+        {
+            string normalizedFullPath = fullPath.Replace('/', '\\');
+            string normalizedCandidate = candidate.Replace('/', '\\');
+            if (!normalizedFullPath.EndsWith(normalizedCandidate, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            int cutIndex = normalizedFullPath.Length - normalizedCandidate.Length;
+            return cutIndex == 0 || normalizedFullPath[cutIndex - 1] == '\\';
         }
 
         /// <summary>Resolves a possibly-relative file path against the current workspace root and

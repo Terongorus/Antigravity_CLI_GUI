@@ -174,5 +174,67 @@ namespace TeronClaudeCodeVS.Tests.Phases
                 Assert.NotEqual(((SolidColorBrush)addRun.Foreground).Color, ((SolidColorBrush)remRun.Foreground).Color);
             });
         }
+
+        // ─── Bare-filename resolution against the project index ─────────────────────────────────
+        //
+        // Real bug found live 2026-09-05: a workspace listing mentioned both
+        // "TestConsoleApp\Program.cs" and "TestProjectClaude2\Program.cs" and only the FIRST
+        // Program.cs in IndexedProjectFiles ever got linked - the old FirstOrDefault-by-leaf-name
+        // lookup silently pointed BOTH mentions at the same file. These call ResolveIndexedFile
+        // directly (see Infrastructure/Reflect.cs) since the actual auto-link pass is gated behind
+        // Core.ClaudeCodePackage.Instance, which is null outside a real VS host - same reason as
+        // A_bare_filename_mention_stays_plain_text_when_no_project_is_indexed above.
+
+        [Fact]
+        public void A_bare_leaf_name_resolves_when_it_is_unique_in_the_project()
+        {
+            string[] indexed = [@"D:\Solution\Class1.cs", @"D:\Solution\TestConsoleApp\Program.cs"];
+
+            string? resolved = Reflect.StaticCall<string>(typeof(MarkdownRenderer), "ResolveIndexedFile", "Program.cs", indexed);
+
+            Assert.Equal(@"D:\Solution\TestConsoleApp\Program.cs", resolved);
+        }
+
+        [Fact]
+        public void A_bare_leaf_name_shared_by_two_files_resolves_to_neither()
+        {
+            string[] indexed =
+            [
+                @"D:\Solution\TestConsoleApp\Program.cs",
+                @"D:\Solution\TestProjectClaude2\Program.cs",
+            ];
+
+            string? resolved = Reflect.StaticCall<string>(typeof(MarkdownRenderer), "ResolveIndexedFile", "Program.cs", indexed);
+
+            Assert.Null(resolved);
+        }
+
+        [Fact]
+        public void A_candidate_carrying_its_own_directory_disambiguates_a_shared_leaf_name()
+        {
+            string[] indexed =
+            [
+                @"D:\Solution\TestConsoleApp\Program.cs",
+                @"D:\Solution\TestProjectClaude2\Program.cs",
+            ];
+
+            string? resolved = Reflect.StaticCall<string>(
+                typeof(MarkdownRenderer), "ResolveIndexedFile", @"TestProjectClaude2\Program.cs", indexed);
+
+            Assert.Equal(@"D:\Solution\TestProjectClaude2\Program.cs", resolved);
+        }
+
+        [Fact]
+        public void A_directory_qualified_candidate_never_matches_a_path_that_merely_ends_with_the_same_letters()
+        {
+            // "TestConsoleApp\Program.cs" must not match "...\OtherTestConsoleApp\Program.cs" just
+            // because the raw string happens to end the same way.
+            string[] indexed = [@"D:\Solution\OtherTestConsoleApp\Program.cs"];
+
+            string? resolved = Reflect.StaticCall<string>(
+                typeof(MarkdownRenderer), "ResolveIndexedFile", @"TestConsoleApp\Program.cs", indexed);
+
+            Assert.Null(resolved);
+        }
     }
 }

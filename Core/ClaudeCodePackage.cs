@@ -91,6 +91,36 @@ namespace TeronClaudeCodeVS.Core
         }
 
         /// <summary>
+        /// The real Visual Studio code editor's own default background - what a fenced code
+        /// block's header+body chrome is painted with, instead of a hand-picked or accent-tinted
+        /// color, so it reads as an actual editor surface (dark stays dark, light stays light) on
+        /// any theme, matching GitHub Copilot Chat's own code blocks. Same lazily-initialized
+        /// format map as <see cref="GetClassificationForeground"/>; null under the xUnit tests'
+        /// fake package-less environment, same fallback contract.
+        /// </summary>
+        internal Brush? GetEditorBackground()
+        {
+            try
+            {
+                if (_classificationFormatMapService == null)
+                {
+                    if (GetService(typeof(SComponentModel)) is not IComponentModel componentModel)
+                        return null;
+
+                    _classificationTypeRegistry ??= componentModel.GetService<IClassificationTypeRegistryService>();
+                    _classificationFormatMapService ??= componentModel.GetService<IClassificationFormatMapService>();
+                }
+
+                var formatMap = _classificationFormatMapService.GetClassificationFormatMap(category: "text");
+                return formatMap.DefaultTextProperties.BackgroundBrush;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Lazily starts (or stops, if the setting was just turned off) the shared IDE companion
         /// server - one per VS instance, shared across every chat session/tool window, matching
         /// how the CLI subprocess is meant to discover exactly one IDE per environment. Call from

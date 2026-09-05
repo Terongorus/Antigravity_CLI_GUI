@@ -108,3 +108,106 @@ attachment kinds so nothing in a sent message is inert:
 Build clean, same 193/194. Not separately unit-tested (temp-file I/O and spawning a real window/
 process aren't worth faking through a mock for what's fundamentally "click a button, something
 external happens") - covered by the same live F5 pass as the rest of this phase.
+
+## Addendum 2 - live-test fallout: chrome colors, attachment layout, filename disambiguation, and a new editor-actions dropdown
+
+Kaloyan's first live F5 pass against everything above surfaced four more issues in one round,
+plus one net-new feature request from a further GitHub Copilot Chat comparison. All fixed/added in
+the same sitting, before any release.
+
+### The fenced-code-block chrome looked worse than the flat highlight it replaced
+
+Phase 24's header+body chrome used the app's own accent hue (`#D97757`) at low alpha for both the
+header and body fill - explicitly chosen so it would "never need a separate light/dark value." Live
+inside a real tool-call card this reads as a washed-out, oddly-tinted box instead of Copilot's own
+reference screenshots, which show one flat, real code-editor surface with a thin divider line under
+the header - not two different colored bands.
+
+Fixed by reading the ACTUAL VS code editor's own default background straight out of the
+classification format map - the same source Phase 24 already uses for per-token foreground colors
+(`ClaudeCodePackage.GetClassificationForeground`) - via a new `ClaudeCodePackage.GetEditorBackground()`
+(`IClassificationFormatMap.DefaultTextProperties.BackgroundBrush`, category `"text"`). The header
+Paragraph and the Section body now share this exact same brush; the header's own existing bottom
+border is the only seam between them, matching the reference exactly. Inline `code` spans (a couple
+of words inside a prose line) were never part of this complaint and keep the original accent tint -
+a solid opaque editor-background fill would look like a broken box mid-sentence at that size. Falls
+back to a neutral (non-accent) translucent gray, never actually seen live, when the classification
+service isn't reachable (the xUnit tests' fake package-less environment).
+
+### Sent-message attachments stacked one per row instead of wrapping inline
+
+`UserMessageTemplate`'s single `ItemsControl` over the whole `Blocks` list used the default
+vertical panel, so every attachment (each its own block) took a full-width row - the exact opposite
+of the composer's own staging chips, which already wrap horizontally, and of how Copilot lays out a
+sent message. Fixed by splitting `ChatMessageViewModel.Blocks` into two computed, live-updating
+views - `AttachmentBlocks` (image/file/code-reference) and `NonAttachmentBlocks` (everything else,
+i.e. the message text) - and giving the bubble two `ItemsControl`s: the first over
+`AttachmentBlocks` with a `WrapPanel` `ItemsPanel`, the second over `NonAttachmentBlocks` with the
+normal vertical panel underneath it. The three attachment DataTemplates' margins changed from
+bottom-only (`0,0,0,6`) to bottom+right (`0,0,6,6`) so wrapped chips get a horizontal gap too, not
+just a vertical one when they wrap to a new row.
+
+### Code-reference chips rendered visibly greyer than the file chip next to them
+
+`CodeReferenceAttachmentTemplate` was the one of the three sent-message attachment templates built
+as a real `Button` with its own `IsMouseOver`-triggered background swap (`CardBackgroundBrush` ->
+`HoverBrush`), rather than a plain `Border` + `MouseBinding` like `FileAttachmentTemplate`. Live,
+it could render stuck in the hover-lighter fill next to a normal-colored file chip - most likely
+because clicking it fires `OpenCommand`, which shifts focus straight into a VS editor window, and a
+`Button` never receiving a normal `MouseLeave` on the way out can stay visually "hovered" long after
+the mouse has left. Fixed by rebuilding it as a plain `Border` + `MouseBinding`, structurally
+identical to `FileAttachmentTemplate` - it has no hover-triggered visual state to begin with, so it
+cannot diverge from the file chip's fill regardless of root cause.
+
+### Two same-named files in different folders both linked to whichever was indexed first
+
+`LinkifyBareFilenames`'s bare-filename regex only ever captured the trailing `word.ext` (no
+directory segments), and its resolution was `indexedFiles.FirstOrDefault(leaf name matches)` - so
+when a workspace listing mentioned both `TestConsoleApp\Program.cs` and
+`TestProjectClaude2\Program.cs`, both mentions silently linked to whichever `Program.cs` happened
+to be first in `IndexedProjectFiles`, with no way to tell from the (identical) leaf name alone which
+one Claude actually meant.
+
+Fixed two ways:
+- The regex now optionally captures leading directory segments in the same run of text
+  (`(?:[A-Za-z0-9_.\-]+[\\/])*` before the `name.ext`), using lookaround instead of `\b` at the
+  edges since `\b` can't sit in front of a segment starting with `.` (`.vscode\launch.json`) - `.`
+  isn't a word character, so whitespace-to-`.` is never a word boundary.
+- New `ResolveIndexedFile`: a candidate carrying its own directory segments is matched against the
+  whole relative tail of each indexed path (`PathEndsWithSegments`, guarded against a
+  `TestConsoleApp` false-positive matching `OtherTestConsoleApp` via a path-separator-or-start-of-
+  string boundary check), so "TestConsoleApp\Program.cs" and "TestProjectClaude2\Program.cs" now
+  resolve to their own distinct files. A bare leaf name with no folder context still only resolves
+  when it is unique across the whole project; an ambiguous one either way is left as plain text
+  rather than guessing, matching this feature's existing "never a wrong link" philosophy.
+- Four new tests (`MarkdownRendererTests`) call `ResolveIndexedFile` directly via the existing
+  `Reflect` helper, since the auto-link pass itself is gated behind `ClaudeCodePackage.Instance`
+  (null under xUnit) the same way the rest of this feature already is.
+
+### New: the header's "Insert at Cursor" dropdown (Insert at Cursor / Insert in New File / Apply in Active Document)
+
+A further GitHub Copilot Chat screenshot showed the header's copy button was only half the
+picture - the pill to its left is a dropdown with three actions. Added as a genuinely new feature,
+not a fix:
+
+- `VsIdeToolHandlers.InsertAtCursorAsync` - replaces the active editor's current selection with the
+  block's text, or inserts at the caret with no selection.
+- `VsIdeToolHandlers.InsertInNewFileAsync` - `DTE.ItemOperations.NewFile(@"General\Text File")`
+  (the same thing File > New File does) then seeds the new, still-unsaved buffer with the block's
+  text - naming/location is left to a normal Save As rather than guessing a path.
+- `VsIdeToolHandlers.ApplyInActiveDocumentAsync` - replaces the ENTIRE contents of the active
+  document with the block's text. Deliberately as literal as Copilot's own button: no diff/merge
+  intelligence, just a full-buffer replace the user can Ctrl+Z out of.
+- All three are best-effort like every other editor action in this file - `false` with no active
+  editor rather than throwing, since an old message's code block can easily be clicked with nothing
+  focused.
+- `MarkdownRenderer.BuildHeaderActionsFloater` replaces the old copy-only `BuildCopyFloater`: ONE
+  Floater containing a horizontal `StackPanel` with the new "Insert at Cursor ▾" button (opens a
+  `ContextMenu` with all three actions) and the existing copy button, in that order - deliberately
+  one floater with an internal panel rather than two separate right-aligned Floaters, since this
+  static, no-visual-tree renderer can't verify FlowDocument's own stacking order for multiple
+  same-side floaters without a live layout pass.
+
+Build clean, 198/198 (194 + the 4 new `ResolveIndexedFile` tests). The chrome color, attachment
+layout, and dropdown feature are UI-only changes with no pure-logic surface to unit test - all three
+need the same live F5 pass as the rest of this phase before a release decision.
