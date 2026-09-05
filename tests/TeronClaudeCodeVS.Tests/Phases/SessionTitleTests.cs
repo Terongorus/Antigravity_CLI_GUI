@@ -44,7 +44,7 @@ namespace TeronClaudeCodeVS.Tests.Phases
         private const string CustomTitleTranscript =
             @"d--Projects-Visual-Studio-Projects-Teron-Applications\7fa8d213-48bc-4c86-9dd7-6d7132719c69.jsonl";
         private const string SmallAiTranscript =
-            @"C--Program-Files-Microsoft-Visual-Studio-18-Community-Common7-IDE\67e8b7cd-9d8a-4856-a7ba-4d53002e296d.jsonl";
+            @"d--Projects-Visual-Studio-Projects-Teron-Extensions-Teron-ClaudeCode-VS\1c755ad0-a213-463c-9c57-5176469484f5.jsonl";
         private const string NoTitleTranscript =
             @"D--Projects-Visual-Studio-Projects-Test-Project-Claude\61df1c7e-5b1c-4dd1-8974-ef4303b3bef2.jsonl";
         private const string HugeTranscript =

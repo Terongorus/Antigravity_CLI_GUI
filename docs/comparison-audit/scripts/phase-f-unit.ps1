@@ -129,7 +129,7 @@ function Fixture([string]$relative) {
 # 2026-08-29; they only grow.
 $fxRevised  = Fixture 'd--Projects-Visual-Studio-Projects-Teron-Extensions\1bb4112b-f6a0-4156-8a3f-d540ac208f92.jsonl'   # 2.4 MB, ai revised, no custom
 $fxCustom   = Fixture 'd--Projects-Visual-Studio-Projects-Teron-Applications\7fa8d213-48bc-4c86-9dd7-6d7132719c69.jsonl' # 1.6 MB, custom set, LATER ai
-$fxSmallAi  = Fixture 'C--Program-Files-Microsoft-Visual-Studio-18-Community-Common7-IDE\67e8b7cd-9d8a-4856-a7ba-4d53002e296d.jsonl' # 27 KB, single ai
+$fxSmallAi  = Fixture 'd--Projects-Visual-Studio-Projects-Teron-Extensions-Teron-ClaudeCode-VS\1c755ad0-a213-463c-9c57-5176469484f5.jsonl' # 25 KB, single ai
 $fxNoTitle  = Fixture 'D--Projects-Visual-Studio-Projects-Test-Project-Claude\61df1c7e-5b1c-4dd1-8974-ef4303b3bef2.jsonl' # 20 KB, no title records
 $fxHuge     = Fixture 'd--Projects-Visual-Studio-Projects-Teron-Extensions\19440230-dcab-4414-b21a-13d2ac1669e8.jsonl'    # 45 MB
 
