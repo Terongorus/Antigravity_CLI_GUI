@@ -567,13 +567,18 @@
             <controls:MarkdownViewer/>
         </DataTemplate>
 
+        <!--
+            Compact square chip, matching the composer's own PendingImageAttachment thumbnail size
+            (34x34) instead of rendering the screenshot at up to 260x200 inline in the transcript -
+            flagged live 2026-09-06 as far too big compared to the composer's own staging chip.
+        -->
         <DataTemplate x:Key="ImageAttachmentTemplate" DataType="{x:Type vm:ImageAttachmentViewModel}">
-            <Border CornerRadius="{StaticResource RadiusCard}" Margin="0,0,6,6" MaxWidth="260" ClipToBounds="True"
+            <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,6,6" ClipToBounds="True"
                     Cursor="Hand" ToolTip="Open full size">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding OpenCommand}"/>
                 </Border.InputBindings>
-                <Image Source="{Binding Thumbnail}" Stretch="Uniform" MaxHeight="200"/>
+                <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" Width="34" Height="34"/>
             </Border>
         </DataTemplate>
 
