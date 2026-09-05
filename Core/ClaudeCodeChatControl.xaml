@@ -972,7 +972,8 @@
         </DataTemplate>
 
         <DataTemplate x:Key="ResultFooterTemplate" DataType="{x:Type vm:ResultFooterViewModel}">
-            <TextBlock Text="{Binding Text}" FontSize="{StaticResource FontSizeChrome}" Opacity="0.6" Margin="2,4,0,8">
+            <TextBlock Text="{Binding Text}" FontSize="{StaticResource FontSizeChrome}" Opacity="0.6" Margin="2,4,0,8"
+                       TextWrapping="Wrap">
                 <TextBlock.Style>
                     <Style TargetType="TextBlock">
                         <Style.Triggers>
