@@ -259,6 +259,7 @@
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="9,3"/>
             <Setter Property="FontSize" Value="{StaticResource FontSizeChrome}"/>
+            <Setter Property="Height" Value="24"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
