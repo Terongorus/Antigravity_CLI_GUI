@@ -1442,6 +1442,15 @@ namespace TeronClaudeCodeVS.Core
                 _vm.RemovePendingImage(attachment);
         }
 
+        // Clicking the staged thumbnail itself opens the same full-size preview a sent image's
+        // thumbnail does - flagged live 2026-09-06 as the only way to see what you actually
+        // attached before sending was clicking Send and checking the transcript afterward.
+        private void OnPendingImagePreviewClicked(object sender, MouseButtonEventArgs e)
+        {
+            if (((FrameworkElement)sender).DataContext is PendingImageAttachment attachment)
+                new Controls.ImagePreviewWindow(attachment.Thumbnail).Show();
+        }
+
         private void OnRemovePendingFileClicked(object sender, RoutedEventArgs e)
         {
             if (((Button)sender).Tag is PendingFileAttachment attachment)

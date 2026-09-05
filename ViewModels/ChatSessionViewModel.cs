@@ -876,7 +876,7 @@ namespace TeronClaudeCodeVS.ViewModels
 
             ChatMessageViewModel userMessage = new(ChatRole.User);
             foreach (PendingImageAttachment image in PendingImages)
-                userMessage.Blocks.Add(new ImageAttachmentViewModel(image.Thumbnail));
+                userMessage.Blocks.Add(new ImageAttachmentViewModel(image.Thumbnail, image.Name));
             foreach (PendingFileAttachment file in PendingFiles)
                 userMessage.Blocks.Add(new FileAttachmentViewModel(file.Title, file.IsPdf, file.Content));
             foreach (PendingCodeReferenceAttachment codeRef in PendingCodeReferences)

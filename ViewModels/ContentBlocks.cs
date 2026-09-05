@@ -42,12 +42,18 @@ namespace TeronClaudeCodeVS.ViewModels
         public void Append(string delta) => Text += delta;
     }
 
-    /// <summary>A pasted screenshot attached to a sent user message - shown as a thumbnail.
+    /// <summary>A pasted screenshot attached to a sent user message - shown as a thumbnail with its
+    /// name and pixel dimensions, matching the composer's own staging chip (PendingImageAttachment).
     /// Clicking it opens a full-size preview, matching the official VS Code extension's own
     /// click-to-preview behavior for a sent image attachment.</summary>
-    public sealed class ImageAttachmentViewModel(ImageSource thumbnail) : ContentBlockViewModel
+    public sealed class ImageAttachmentViewModel(ImageSource thumbnail, string name) : ContentBlockViewModel
     {
         public ImageSource Thumbnail { get; } = thumbnail;
+
+        public string Name { get; } = name;
+
+        public string DimensionsText { get; } =
+            thumbnail is System.Windows.Media.Imaging.BitmapSource bmp ? $"{bmp.PixelWidth}×{bmp.PixelHeight}" : "";
 
         public ICommand OpenCommand { get; } = new RelayCommand(() =>
         {

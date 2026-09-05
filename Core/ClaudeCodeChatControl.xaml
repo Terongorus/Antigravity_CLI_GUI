@@ -568,17 +568,31 @@
         </DataTemplate>
 
         <!--
-            Compact square chip, matching the composer's own PendingImageAttachment thumbnail size
-            (34x34) instead of rendering the screenshot at up to 260x200 inline in the transcript -
-            flagged live 2026-09-06 as far too big compared to the composer's own staging chip.
+            Compact chip matching the composer's own PendingImageAttachment chip - same 34x34
+            thumbnail plus name/dimensions text, instead of rendering the screenshot at up to
+            260x200 inline in the transcript (flagged live 2026-09-06 as far too big), and instead
+            of a bare thumbnail with no name/dimensions once shrunk (flagged live 2026-09-06 too).
         -->
         <DataTemplate x:Key="ImageAttachmentTemplate" DataType="{x:Type vm:ImageAttachmentViewModel}">
-            <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,6,6" ClipToBounds="True"
+            <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,6,6" Padding="3"
+                    Background="{StaticResource CardBackgroundBrush}"
                     Cursor="Hand" ToolTip="Open full size">
                 <Border.InputBindings>
                     <MouseBinding MouseAction="LeftClick" Command="{Binding OpenCommand}"/>
                 </Border.InputBindings>
-                <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" Width="34" Height="34"/>
+                <StackPanel Orientation="Horizontal">
+                    <Border CornerRadius="{StaticResource RadiusControl}" ClipToBounds="True">
+                        <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" Width="34" Height="34"/>
+                    </Border>
+                    <StackPanel VerticalAlignment="Center" Margin="6,0,4,0" MaxWidth="150">
+                        <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontSizeChrome}"
+                                   TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
+                        <TextBlock Text="{Binding DimensionsText}" FontSize="{StaticResource FontSizeChrome}"
+                                   Opacity="0.55"
+                                   Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
+                    </StackPanel>
+                </StackPanel>
             </Border>
         </DataTemplate>
 
@@ -1995,7 +2009,8 @@
                                 <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,6,6" Padding="3"
                                         BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1">
                                     <StackPanel Orientation="Horizontal">
-                                        <Image Source="{Binding Thumbnail}" Width="34" Height="34" Stretch="UniformToFill"/>
+                                        <Image Source="{Binding Thumbnail}" Width="34" Height="34" Stretch="UniformToFill"
+                                               Cursor="Hand" ToolTip="Open preview" MouseLeftButtonUp="OnPendingImagePreviewClicked"/>
                                         <StackPanel VerticalAlignment="Center" Margin="6,0,4,0" MaxWidth="150">
                                             <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontSizeChrome}"
                                                        TextTrimming="CharacterEllipsis"
