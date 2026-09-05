@@ -175,6 +175,23 @@ namespace TeronClaudeCodeVS.ViewModels
         /// </summary>
         private readonly Queue<ChatMessageViewModel> _pendingUserMessages = new();
 
+        /// <summary>
+        /// Set by <see cref="SendMessageAsync"/> when a message is sent while a turn is already
+        /// streaming, consumed once by <see cref="EnsureAssistantMessage"/>. Found live
+        /// 2026-09-06: without this, a message sent mid-turn was positioned correctly at the
+        /// moment it was sent, but the SAME still-open assistant entry (positioned before it) kept
+        /// growing with every further tool call for the rest of that turn - which visually reads
+        /// as the message being "pushed to the bottom" of an ever-taller block above it, even
+        /// though its own place in the list never moved. Cutting the in-flight entry here forces
+        /// the next block to start a fresh one, appended at the true end (where "now" actually is)
+        /// rather than reusing the answered-message index lookup below, which is for a distinct
+        /// case: a genuinely NEW top-level turn answering a specific queued message, one that may
+        /// no longer be the newest thing in the transcript by the time its turn starts. Combining
+        /// a mid-turn split with more than one message queued during it can still misorder - not
+        /// worth the complexity of a general scheduler for a combination this rare.
+        /// </summary>
+        private bool _turnContinuedMidStream;
+
         // Tools the user has chosen to allow for the remainder of the current session.
         private readonly HashSet<string> _sessionPermissions = new(StringComparer.OrdinalIgnoreCase);
 
@@ -870,6 +887,14 @@ namespace TeronClaudeCodeVS.ViewModels
             Messages.Add(userMessage);
             _pendingUserMessages.Enqueue(userMessage);
 
+            // See _turnContinuedMidStream: a turn already streaming must not keep growing the
+            // entry that sits above the message just sent.
+            if (_currentAssistantMessage != null)
+            {
+                _currentAssistantMessage = null;
+                _turnContinuedMidStream = true;
+            }
+
             // Record the first message as the session title.
             if (_pendingSessionTitle == null)
             {
@@ -922,6 +947,7 @@ namespace TeronClaudeCodeVS.ViewModels
         private void ResetTurnState()
         {
             _currentAssistantMessage = null;
+            _turnContinuedMidStream = false;
             _blocksByIndex.Clear();
             _toolCallsByUseId.Clear();
         }
@@ -1328,13 +1354,19 @@ namespace TeronClaudeCodeVS.ViewModels
             {
                 _currentAssistantMessage = new ChatMessageViewModel(ChatRole.Assistant);
 
-                // Insert right after the user message this turn actually answers, not always at
-                // the transcript's end - otherwise a message queued while an earlier turn was
-                // still streaming renders below that later message's own response, garbling the
-                // visible order (see docs/Phase 21, item 4).
                 int insertAt = Messages.Count;
-                if (_pendingUserMessages.Count > 0)
+                if (_turnContinuedMidStream)
                 {
+                    // Not a new turn answering a specific message - the same turn just got cut by
+                    // a mid-stream send (see _turnContinuedMidStream). "Now" is the true end.
+                    _turnContinuedMidStream = false;
+                }
+                else if (_pendingUserMessages.Count > 0)
+                {
+                    // Insert right after the user message this turn actually answers, not always
+                    // at the transcript's end - otherwise a message queued while an earlier turn
+                    // was still streaming renders below that later message's own response,
+                    // garbling the visible order (see docs/Phase 21, item 4).
                     ChatMessageViewModel answeredMessage = _pendingUserMessages.Dequeue();
                     int userIndex = Messages.IndexOf(answeredMessage);
                     if (userIndex >= 0)
