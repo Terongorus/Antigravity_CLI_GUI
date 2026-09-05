@@ -243,16 +243,39 @@ namespace TeronClaudeCodeVS.Core
         /// Returns null when the needle isn't present, which is the caller's signal that the file
         /// has moved on since and the reconstruction can't be trusted.
         /// </summary>
+        /// <remarks>
+        /// Matching happens in a fully LF-normalised space, then the file's own line-ending
+        /// convention is restored. Found live 2026-09-06: the CLI's own `old_string`/`new_string`
+        /// are bare-LF even for a file whose real on-disk contents are CRLF (confirmed against
+        /// real transcripts - every multi-line `old_string` sampled used `\n`, never `\r\n`,
+        /// regardless of the target file's actual convention; a fresh Windows-authored `.cs`/
+        /// `.csproj` checked out through git's `core.autocrlf` is exactly such a file). A plain
+        /// ordinal search for an LF needle against an unmodified CRLF haystack silently fails on
+        /// any multi-line match, which is what produced "the text it replaces isn't in the file
+        /// as it currently stands" for edits that were perfectly valid against the file's actual
+        /// content. This mirrors what the CLI's own Edit tool must already be doing internally to
+        /// apply that same `old_string`/`new_string` to disk successfully in the first place.
+        /// Mixed line endings within one file are not specially handled - the rest of the file's
+        /// bare-LF lines (if any) get promoted to CRLF alongside the genuinely CRLF ones, which is
+        /// a rare-case simplification, not a regression from the un-normalised behaviour this
+        /// replaces.
+        /// </remarks>
         private static string? Replace(string haystack, string needle, string replacement, bool all)
         {
-            int at = haystack.IndexOf(needle, StringComparison.Ordinal);
+            bool usesCrLf = haystack.Contains("\r\n");
+            string normalizedHaystack = usesCrLf ? haystack.Replace("\r\n", "\n") : haystack;
+            string normalizedNeedle = needle.Replace("\r\n", "\n");
+            string normalizedReplacement = replacement.Replace("\r\n", "\n");
+
+            int at = normalizedHaystack.IndexOf(normalizedNeedle, StringComparison.Ordinal);
             if (at < 0)
                 return null;
 
-            if (all)
-                return haystack.Replace(needle, replacement);
+            string result = all
+                ? normalizedHaystack.Replace(normalizedNeedle, normalizedReplacement)
+                : normalizedHaystack.Substring(0, at) + normalizedReplacement + normalizedHaystack.Substring(at + normalizedNeedle.Length);
 
-            return haystack.Substring(0, at) + replacement + haystack.Substring(at + needle.Length);
+            return usesCrLf ? result.Replace("\n", "\r\n") : result;
         }
 
         private static void CloseExisting(string path)

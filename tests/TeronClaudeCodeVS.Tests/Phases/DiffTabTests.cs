@@ -80,6 +80,32 @@ namespace TeronClaudeCodeVS.Tests.Phases
         }
 
         [Fact]
+        public void A_multiline_edit_matches_against_a_CRLF_file_even_though_the_CLI_sends_bare_LF()
+        {
+            // Found live 2026-09-06: a fresh Windows-authored file (git core.autocrlf checkout, or
+            // one VS itself created) is CRLF on disk, but the CLI's own old_string/new_string are
+            // always bare-LF (confirmed against real transcripts). A naive ordinal search for the
+            // LF needle against the unmodified CRLF haystack fails on any multi-line match, which
+            // is exactly what produced "the text it replaces isn't in the file as it currently
+            // stands" for a perfectly valid edit.
+            string before = "line one\r\nline two\r\nline three\r\n";
+            string? result = ApplyForward("Edit",
+                Input(@"{ ""old_string"": ""line one\nline two"", ""new_string"": ""LINE ONE\nLINE TWO"" }"), before);
+
+            Assert.Equal("LINE ONE\r\nLINE TWO\r\nline three\r\n", result);
+        }
+
+        [Fact]
+        public void Reverse_also_matches_a_CRLF_file_against_the_CLIs_bare_LF_strings()
+        {
+            string after = "LINE ONE\r\nLINE TWO\r\nline three\r\n";
+            string? result = ReverseApply("Edit",
+                Input(@"{ ""old_string"": ""line one\nline two"", ""new_string"": ""LINE ONE\nLINE TWO"" }"), after);
+
+            Assert.Equal("line one\r\nline two\r\nline three\r\n", result);
+        }
+
+        [Fact]
         public void Write_replaces_the_entire_file()
         {
             Assert.Equal("whole new body",
