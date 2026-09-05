@@ -1,9 +1,13 @@
 using TeronClaudeCodeVS.Commands;
+using Microsoft.VisualStudio.ComponentModelHost;
+using Microsoft.VisualStudio.Language.StandardClassification;
 using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Text.Classification;
 using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Media;
 
 namespace TeronClaudeCodeVS.Core
 {
@@ -39,6 +43,46 @@ namespace TeronClaudeCodeVS.Core
         internal ClaudeCodeOptionsPage GetOptions() => (ClaudeCodeOptionsPage)GetDialogPage(typeof(ClaudeCodeOptionsPage));
 
         internal void ShowOptions() => ShowOptionPage(typeof(ClaudeCodeOptionsPage));
+
+        private IClassificationTypeRegistryService? _classificationTypeRegistry;
+        private IClassificationFormatMapService? _classificationFormatMapService;
+
+        /// <summary>
+        /// The real Visual Studio editor's own color for a token kind (keyword/string/comment/...),
+        /// same source GitHub Copilot Chat's code blocks use - not a hand-picked palette, so it
+        /// tracks the user's actual color theme AND any Fonts and Colors customization
+        /// automatically. Category "text" is the shared, view-independent format map (mirrors the
+        /// "Text Editor" category in Tools > Options > Fonts and Colors) - no live ITextView is
+        /// needed for it. Returns null (caller falls back to the plain theme text color) if the
+        /// classification services aren't available, e.g. under the xUnit tests' fake package-less
+        /// environment.
+        /// </summary>
+        internal Brush? GetClassificationForeground(string classificationTypeName)
+        {
+            try
+            {
+                if (_classificationTypeRegistry == null || _classificationFormatMapService == null)
+                {
+                    if (GetService(typeof(SComponentModel)) is not IComponentModel componentModel)
+                        return null;
+
+                    _classificationTypeRegistry = componentModel.GetService<IClassificationTypeRegistryService>();
+                    _classificationFormatMapService = componentModel.GetService<IClassificationFormatMapService>();
+                }
+
+                var classificationType = _classificationTypeRegistry.GetClassificationType(classificationTypeName);
+                if (classificationType == null) return null;
+
+                var formatMap = _classificationFormatMapService.GetClassificationFormatMap(category: "text");
+                return formatMap.GetTextProperties(classificationType).ForegroundBrush;
+            }
+            catch
+            {
+                // A missing/renamed classification type, or no editor host at all, must never cost
+                // the user the code block itself - the caller's plain-text fallback still reads fine.
+                return null;
+            }
+        }
 
         /// <summary>
         /// Lazily starts (or stops, if the setting was just turned off) the shared IDE companion

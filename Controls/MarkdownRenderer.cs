@@ -1,5 +1,7 @@
 using Markdig;
+using Microsoft.VisualStudio.Language.StandardClassification;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -23,17 +25,24 @@ namespace TeronClaudeCodeVS.Controls
                 .UseEmojiAndSmiley()
                 .Build();
 
-        // Code background - inline `code` spans and fenced code blocks alike. Went through two
-        // revisions on 2026-09-05: first just bumping a neutral grey's alpha (0x18 -> 0x40), which
-        // fixed "barely visible" but was called out live as still the wrong idea - a shade/alpha
-        // tweak on a neutral tone reads as a washed-out chip either way, not something that
-        // actually stands out. Switched to the app's own accent hue (ChatTheme.xaml's
+        // Card background for a fenced code block - inline `code` spans keep this same tint too.
+        // Went through two revisions on 2026-09-05: first just bumping a neutral grey's alpha
+        // (0x18 -> 0x40), which fixed "barely visible" but was called out live as still the wrong
+        // idea - a shade/alpha tweak on a neutral tone reads as a washed-out chip either way, not
+        // something that actually stands out. Switched to the app's own accent hue (ChatTheme.xaml's
         // ClaudeAccentBrush #D97757, kept in sync manually here since that dictionary isn't
         // reachable from this static, no-visual-tree renderer) at low alpha - alpha-blending over
         // whatever the real background is keeps the "never needs a separate light/dark value"
         // property, but a warm, branded tint reads as an intentional highlight on both VS light and
         // dark instead of a generic grey box.
         private static readonly SolidColorBrush s_codeBg = Frozen(Color.FromArgb(0x33, 0xD9, 0x77, 0x57));
+
+        // The header strip needs to read as visibly distinct from the body beneath it (see the
+        // GitHub Copilot Chat reference screenshots) - same hue, stronger alpha, so it visually
+        // deepens where it's painted over the section's own s_codeBg rather than introducing a
+        // second hardcoded color that would need its own light/dark justification.
+        private static readonly SolidColorBrush s_codeHeaderBg = Frozen(Color.FromArgb(0x50, 0xD9, 0x77, 0x57));
+        private static readonly SolidColorBrush s_codeBorderBrush = Frozen(Color.FromArgb(0x40, 0x80, 0x80, 0x80));
         private static readonly FontFamily s_inlineCodeFont = new("Consolas");
 
         // Diff line colors (same hues as GitHub's diff view).
@@ -51,7 +60,35 @@ namespace TeronClaudeCodeVS.Controls
 
         private static SolidColorBrush Frozen(Color c) { SolidColorBrush b = new(c); b.Freeze(); return b; }
 
-        public static FlowDocument Render(string markdown)
+        /// <summary>Threaded through one Render() call: which language each top-level fenced code
+        /// block is written in (in document order, from Markdig's own AST - lost once Markdig.Wpf
+        /// has already turned everything into plain WPF TextElements), and which single file path
+        /// (if any) the FIRST such block should link to in its header.</summary>
+        private sealed class CodeBlockContext
+        {
+            public Queue<string?> Languages { get; } = new();
+            public string? PrimaryFilePath { get; set; }
+            private bool _primaryPathConsumed;
+
+            public string? NextLanguage() => Languages.Count > 0 ? Languages.Dequeue() : null;
+
+            public string? ConsumePrimaryFilePath()
+            {
+                if (_primaryPathConsumed || string.IsNullOrEmpty(PrimaryFilePath)) return null;
+                _primaryPathConsumed = true;
+                return PrimaryFilePath;
+            }
+        }
+
+        public static FlowDocument Render(string markdown) => Render(markdown, primaryFilePath: null);
+
+        /// <param name="primaryFilePath">
+        /// The file the FIRST fenced code block in <paramref name="markdown"/> is about (an Edit's
+        /// diff, a Write's new content) - shown as a clickable filename in that block's header
+        /// instead of a plain language label. Null for tool calls with no single file (Bash, a
+        /// generic JSON dump) or for plain assistant prose.
+        /// </param>
+        public static FlowDocument Render(string markdown, string? primaryFilePath)
         {
             if (string.IsNullOrEmpty(markdown))
                 return new FlowDocument();
@@ -70,7 +107,17 @@ namespace TeronClaudeCodeVS.Controls
                 doc.PagePadding = new Thickness(0);
                 doc.ColumnWidth = double.PositiveInfinity;
 
-                PostProcess(doc);
+                CodeBlockContext ctx = new() { PrimaryFilePath = primaryFilePath };
+                // A second, independent parse of the same source text: Markdig.Wpf's ToXaml already
+                // discarded the AST (language info strings included) by the time it produced plain
+                // WPF TextElements above. CodeBlock (FencedCodeBlock's base) also covers a 4-space
+                // indented block, which carries no Info string - same as an unrecognized language.
+                Markdig.Syntax.MarkdownDocument ast = Markdig.Markdown.Parse(markdown, Pipeline);
+                var codeBlocks = Markdig.Syntax.MarkdownObjectExtensions.Descendants<Markdig.Syntax.CodeBlock>(ast);
+                foreach (Markdig.Syntax.CodeBlock codeBlock in codeBlocks)
+                    ctx.Languages.Enqueue((codeBlock as Markdig.Syntax.FencedCodeBlock)?.Info);
+
+                PostProcess(doc, ctx);
 
                 return doc;
             }
@@ -84,7 +131,7 @@ namespace TeronClaudeCodeVS.Controls
 
         // ─── Post-processing ──────────────────────────────────────────────────────
 
-        private static void PostProcess(FlowDocument doc)
+        private static void PostProcess(FlowDocument doc, CodeBlockContext ctx)
         {
             try
             {
@@ -96,7 +143,7 @@ namespace TeronClaudeCodeVS.Controls
                 if (IsLightBackground(doc.Background))
                     doc.ClearValue(TextElement.BackgroundProperty);
 
-                WalkBlocks(doc.Blocks);
+                WalkBlocks(doc.Blocks, ctx);
             }
             catch
             {
@@ -104,23 +151,74 @@ namespace TeronClaudeCodeVS.Controls
             }
         }
 
-        private static void WalkBlocks(BlockCollection blocks)
+        private static void WalkBlocks(BlockCollection blocks, CodeBlockContext ctx)
         {
             // Snapshotted, not a live foreach: every Block/Inline in a FlowDocument shares one
-            // underlying TextContainer, so AddCopyAffordance's Floater insertion into an EARLIER
-            // sibling paragraph's Inlines bumps a version counter that invalidates THIS loop's own
-            // enumerator over the outer BlockCollection too - a `foreach` over `blocks` throws
-            // "Collection was modified" on its next MoveNext() once any code block anywhere before
-            // the end has gotten a copy button. PostProcess's own try/catch was silently swallowing
-            // this, so every document with 2+ top-level blocks (a command followed by its output,
-            // for instance) quietly stopped processing after the first one - found live 2026-09-05
-            // as "the output block still has the old ugly highlight" one block down from a command
-            // block that looked fine.
+            // underlying TextContainer, so replacing/mutating an EARLIER sibling bumps a version
+            // counter that invalidates THIS loop's own enumerator over the outer BlockCollection
+            // too - a `foreach` over `blocks` throws "Collection was modified" on its next
+            // MoveNext() once any earlier block has been touched that way. PostProcess's own
+            // try/catch was silently swallowing this, so every document with 2+ top-level blocks
+            // (a command followed by its output, for instance) quietly stopped processing after the
+            // first one - found live 2026-09-05 as "the output block still has the old ugly
+            // highlight" one block down from a command block that looked fine.
             foreach (var block in blocks.Cast<Block>().ToList())
-                WalkBlock(block);
+            {
+                // Markdig.Wpf's own tell for "this Paragraph came from a fenced/indented code
+                // block": a light background sized for a white page. Replaced wholesale with a
+                // header+body chrome (language/filename + copy button over the actual code) rather
+                // than just recolored in place, to match a real code-editor card instead of a flat
+                // highlighted rectangle - see docs/Phase 24.
+                if (block is Paragraph codePara && IsLightBackground(codePara.Background))
+                {
+                    string? language = ctx.NextLanguage();
+                    string? filePath = ctx.ConsumePrimaryFilePath();
+
+                    string rawCode = new TextRange(codePara.ContentStart, codePara.ContentEnd).Text;
+
+                    // Neutralize Markdig.Wpf's own black-foreground default before any recoloring
+                    // below - ApplyTokenColors leaves an unsupported language's Inlines completely
+                    // untouched (see its own doc comment), and would otherwise render as literal
+                    // black text regardless of VS theme now that this whole block no longer goes
+                    // through FixupParagraph's black-clearing at all.
+                    if (IsBlackForeground(codePara.Foreground))
+                        codePara.ClearValue(TextElement.ForegroundProperty);
+                    foreach (Run run in codePara.Inlines.OfType<Run>())
+                        if (IsBlackForeground(run.Foreground))
+                            run.ClearValue(TextElement.ForegroundProperty);
+
+                    bool isDiff = string.Equals(language, "diff", StringComparison.OrdinalIgnoreCase);
+                    if (isDiff)
+                        ApplyDiffColors(codePara.Inlines);
+                    else
+                        ApplyTokenColors(codePara, language, rawCode);
+
+                    Section section = new()
+                    {
+                        Background = s_codeBg,
+                        BorderBrush = s_codeBorderBrush,
+                        BorderThickness = new Thickness(1),
+                        Margin = codePara.Margin,
+                        Padding = new Thickness(0),
+                    };
+
+                    blocks.InsertBefore(codePara, section);
+                    blocks.Remove(codePara);
+
+                    codePara.ClearValue(TextElement.BackgroundProperty);
+                    codePara.BorderThickness = new Thickness(0);
+                    codePara.Margin = new Thickness(10, 6, 10, 10);
+
+                    section.Blocks.Add(BuildCodeHeader(language, filePath, rawCode));
+                    section.Blocks.Add(codePara);
+                    continue;
+                }
+
+                WalkBlock(block, ctx);
+            }
         }
 
-        private static void WalkBlock(Block block)
+        private static void WalkBlock(Block block, CodeBlockContext ctx)
         {
             switch (block)
             {
@@ -133,17 +231,16 @@ namespace TeronClaudeCodeVS.Controls
                         section.Background = s_codeBg;
                     if (IsBlackForeground(section.Foreground))
                         section.ClearValue(TextElement.ForegroundProperty);
-                    WalkBlocks(section.Blocks);
+                    WalkBlocks(section.Blocks, ctx);
                     break;
 
                 case List list:
                     // Same shared-TextContainer hazard as WalkBlocks: WalkBlocks(li.Blocks) can
-                    // insert a copy-button Floater into an earlier list item, which would
-                    // invalidate this loop's own live enumerator over ListItems on its next
-                    // MoveNext() - snapshot first.
+                    // mutate an earlier list item, which would invalidate this loop's own live
+                    // enumerator over ListItems on its next MoveNext() - snapshot first.
                     foreach (ListItem li in list.ListItems.Cast<ListItem>().ToList())
                     {
-                        WalkBlocks(li.Blocks);
+                        WalkBlocks(li.Blocks, ctx);
                         OverrideStyledForeground(li);
                     }
                     break;
@@ -154,7 +251,7 @@ namespace TeronClaudeCodeVS.Controls
                         foreach (TableRow row in rg.Rows.Cast<TableRow>().ToList())
                             foreach (TableCell cell in row.Cells.Cast<TableCell>().ToList())
                             {
-                                WalkBlocks(cell.Blocks);
+                                WalkBlocks(cell.Blocks, ctx);
                                 OverrideStyledForeground(cell);
                             }
                     break;
@@ -203,23 +300,10 @@ namespace TeronClaudeCodeVS.Controls
             if (IsBlackForeground(para.Foreground))
                 para.ClearValue(TextElement.ForegroundProperty);
 
-            // Code blocks from Markdig.Wpf have a light background; make it theme-neutral.
-            bool isCodeBlock = IsLightBackground(para.Background);
-            if (isCodeBlock)
-            {
-                para.Background = s_codeBg;
-                ApplyDiffColors(para.Inlines);
-                AddCopyAffordance(para);
-            }
-            else
-            {
-                // Turns a sent "@path#Lstart-Lend" reference (written by
-                // ClaudeCodeChatControl.InsertContextReference) into a clickable link back to that
-                // file/line - never inside a fenced code block, where the same "@word" shape shows
-                // up constantly as a real decorator (@property, @Override, @Injectable()) rather
-                // than a file mention.
-                LinkifyFileReferences(para);
-            }
+            // A fenced/indented code block never reaches here - WalkBlocks intercepts and replaces
+            // those before calling WalkBlock/FixupParagraph at all. This is prose, so file
+            // references are worth linkifying.
+            LinkifyFileReferences(para);
 
             // Inline `code` spans can come through as a bare Run with its own Background rather
             // than wrapped in a Span - normalize those directly (see FixupSpan for why).
@@ -238,67 +322,84 @@ namespace TeronClaudeCodeVS.Controls
         }
 
         /// <summary>
-        /// UX-8: gives each fenced code block its own copy button, as baseline does. The only
-        /// affordance we had was a single global "Copy Raw Output", which copies the entire
-        /// transcript - useless when the user wants one command out of a long answer.
-        /// <para>
-        /// A <see cref="Floater"/> is the FlowDocument-native way to park a control at the right
-        /// edge of a block; an InlineUIContainer would sit in the text flow and push the first
-        /// line of code sideways. The block's text is snapshotted at build time because the
-        /// document is rebuilt from scratch on every streaming update, so a stale closure is not
-        /// possible.
-        /// </para>
+        /// Builds the strip above a code block's body: the language name, or - when this block is
+        /// about one specific file (an Edit's diff, a Write's new content) - that file's name as a
+        /// clickable link that opens it in the real editor, plus a copy button on the right. Modeled
+        /// on GitHub Copilot Chat's own code-block header rather than the plain floating corner
+        /// button this replaced (see docs/Phase 24).
         /// </summary>
-        private static void AddCopyAffordance(Paragraph para)
+        private static Paragraph BuildCodeHeader(string? language, string? filePath, string code)
         {
-            try
+            Paragraph header = new()
             {
-                if (para.Inlines.FirstInline == null) return;
+                Margin = new Thickness(0),
+                Padding = new Thickness(10, 5, 6, 5),
+                Background = s_codeHeaderBg,
+                BorderBrush = s_codeBorderBrush,
+                BorderThickness = new Thickness(0, 0, 0, 1),
+                FontSize = 11,
+            };
+            header.SetResourceReference(TextElement.ForegroundProperty,
+                Microsoft.VisualStudio.Shell.VsBrushes.ToolWindowTextKey);
 
-                // Snapshot before inserting the floater, so the button's own label is not copied.
-                string code = new TextRange(para.ContentStart, para.ContentEnd).Text;
-                if (string.IsNullOrWhiteSpace(code)) return;
-
-                Button button = new()
-                {
-                    Content = s_copyGlyph,
-                    FontFamily = s_symbolFont,
-                    FontSize = 20, //manually changed to boost size
-                    Padding = new Thickness(5, 0, 5, 0),
-                    Margin = new Thickness(0),
-                    Background = Brushes.Transparent,
-                    BorderThickness = new Thickness(0),
-                    Cursor = System.Windows.Input.Cursors.Hand,
-                    Opacity = 0.55,
-                    ToolTip = "Copy this code block",
-                    Focusable = false,
-                };
-                button.SetResourceReference(Control.ForegroundProperty,
-                    Microsoft.VisualStudio.Shell.VsBrushes.ToolWindowTextKey);
-
-                button.MouseEnter += (_, __) => button.Opacity = 1.0;
-                button.MouseLeave += (_, __) => button.Opacity = 0.55;
-                button.Click += (_, __) => CopyToClipboard(button, code);
-
-                Floater floater = new(new BlockUIContainer(button)
-                {
-                    Margin = new Thickness(0),
-                    Padding = new Thickness(0),
-                })
-                {
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    Width = 26,
-                    Margin = new Thickness(0),
-                    Padding = new Thickness(0),
-                    BorderThickness = new Thickness(0),
-                };
-
-                para.Inlines.InsertBefore(para.Inlines.FirstInline, floater);
-            }
-            catch
+            if (!string.IsNullOrEmpty(filePath))
             {
-                // A missing copy button must never cost the user the code block itself.
+                Hyperlink link = new(new Run(Path.GetFileName(filePath)))
+                {
+                    ToolTip = $"Open {filePath}",
+                };
+                // Fire-and-forget rather than an async lambda: OpenReferenceAsync already
+                // try/catches its entire body, so nothing here can throw unobserved.
+                link.Click += (_, __) => _ = OpenReferenceAsync(filePath!, null, null);
+                header.Inlines.Add(link);
             }
+            else
+            {
+                header.Inlines.Add(new Run(string.IsNullOrEmpty(language) ? "text" : language!));
+            }
+
+            header.Inlines.Add(BuildCopyFloater(code));
+            return header;
+        }
+
+        private static Floater BuildCopyFloater(string code)
+        {
+            Button button = new()
+            {
+                Content = s_copyGlyph,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                FontFamily = s_symbolFont,
+                FontSize = 16,
+                FontWeight = FontWeights.Bold,
+                Padding = new Thickness(5, 2, 5, 2),
+                Margin = new Thickness(0),
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                Opacity = 0.7,
+                ToolTip = "Copy this code block",
+                Focusable = false,
+            };
+            button.SetResourceReference(Control.ForegroundProperty,
+                Microsoft.VisualStudio.Shell.VsBrushes.ToolWindowTextKey);
+
+            button.MouseEnter += (_, __) => { button.Opacity = 1.0; button.Background = s_codeBorderBrush; };
+            button.MouseLeave += (_, __) => { button.Opacity = 0.7; button.Background = Brushes.Transparent; };
+            button.Click += (_, __) => CopyToClipboard(button, code);
+
+            return new Floater(new BlockUIContainer(button)
+            {
+                Margin = new Thickness(0),
+                Padding = new Thickness(0),
+            })
+            {
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Width = 28,
+                Margin = new Thickness(0),
+                Padding = new Thickness(0),
+                BorderThickness = new Thickness(0),
+            };
         }
 
         private static void CopyToClipboard(Button button, string code)
@@ -326,6 +427,46 @@ namespace TeronClaudeCodeVS.Controls
                 button.Content = s_copyFailedGlyph;
                 button.ToolTip = "Copy failed";
             }
+        }
+
+        /// <summary>
+        /// Recolors a code block's own text per-token using the real Visual Studio editor's own
+        /// classification colors (see <see cref="Core.ClaudeCodePackage.GetClassificationForeground"/>)
+        /// rather than a hand-picked palette, so it tracks the user's actual theme/Fonts-and-Colors
+        /// setup - the same source GitHub Copilot Chat's own code blocks read from. A language with
+        /// no tokenizer profile (see <see cref="SyntaxHighlighter"/>) is left exactly as Markdig.Wpf
+        /// rendered it - flat text in the theme's plain foreground, same as before this phase.
+        /// </summary>
+        private static void ApplyTokenColors(Paragraph contentPara, string? language, string rawCode)
+        {
+            IReadOnlyList<SyntaxToken> tokens = SyntaxHighlighter.Tokenize(language, rawCode);
+            if (tokens.Count == 1 && tokens[0].Kind == TokenKind.Plain)
+                return;
+
+            contentPara.Inlines.Clear();
+            foreach (SyntaxToken token in tokens)
+            {
+                Run run = new(token.Text) { FontFamily = s_inlineCodeFont };
+                Brush? brush = GetTokenBrush(token.Kind);
+                if (brush != null)
+                    run.Foreground = brush;
+                contentPara.Inlines.Add(run);
+            }
+        }
+
+        private static Brush? GetTokenBrush(TokenKind kind)
+        {
+            string? classificationName = kind switch
+            {
+                TokenKind.Keyword => PredefinedClassificationTypeNames.Keyword,
+                TokenKind.String => PredefinedClassificationTypeNames.String,
+                TokenKind.Comment => PredefinedClassificationTypeNames.Comment,
+                TokenKind.Number => PredefinedClassificationTypeNames.Number,
+                _ => null,
+            };
+            return classificationName == null
+                ? null
+                : TeronClaudeCodeVS.Core.ClaudeCodePackage.Instance?.GetClassificationForeground(classificationName);
         }
 
         // Requires a real extension on the path segment (Class1.cs, src/Foo/Bar.tsx) so it never
@@ -439,27 +580,51 @@ namespace TeronClaudeCodeVS.Controls
                 FixupSpan(child);
         }
 
+        /// <summary>
+        /// Markdig.Wpf renders an entire fenced code block as ONE Run with embedded '\n' characters
+        /// (confirmed live 2026-09-05, not one Run per line as the coloring below used to assume) -
+        /// WPF's text layout still wraps that Run onto separate visual lines at each '\n', so it
+        /// always LOOKED right, but every line in the block was silently getting the same single
+        /// color (whatever the very first line's prefix happened to be), never real per-line +/-
+        /// coloring. Fixed by splitting each Run on '\n' into its own colored Run, rejoined with
+        /// explicit LineBreaks so the line-by-line layout is unchanged.
+        /// </summary>
         private static void ApplyDiffColors(InlineCollection inlines)
         {
-            // Only activate for blocks that actually look like a unified diff.
-            bool hasDiff = inlines.OfType<Run>().Any(r =>
-                r.Text.StartsWith("+", StringComparison.Ordinal) ||
-                r.Text.StartsWith("-", StringComparison.Ordinal));
-
-            if (!hasDiff) return;
-
-            foreach (var run in inlines.OfType<Run>())
+            foreach (Run run in inlines.OfType<Run>().ToList())
             {
-                string t = run.Text;
-                if (t.StartsWith("+++", StringComparison.Ordinal) || t.StartsWith("---", StringComparison.Ordinal))
-                    run.Foreground = s_diffHunk;
-                else if (t.StartsWith("+", StringComparison.Ordinal))
-                    run.Foreground = s_diffAdd;
-                else if (t.StartsWith("-", StringComparison.Ordinal))
-                    run.Foreground = s_diffRem;
-                else if (t.StartsWith("@@", StringComparison.Ordinal))
-                    run.Foreground = s_diffHunk;
+                string[] lines = run.Text.Split('\n');
+
+                // Only activate for blocks that actually look like a unified diff.
+                bool hasDiff = lines.Any(l =>
+                    l.StartsWith("+", StringComparison.Ordinal) || l.StartsWith("-", StringComparison.Ordinal));
+                if (!hasDiff) continue;
+
+                Inline anchor = run;
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    Run lineRun = new(lines[i]);
+                    Brush? color = DiffLineColor(lines[i]);
+                    if (color != null) lineRun.Foreground = color;
+
+                    inlines.InsertAfter(anchor, anchor = lineRun);
+                    if (i < lines.Length - 1)
+                        inlines.InsertAfter(anchor, anchor = new LineBreak());
+                }
+
+                inlines.Remove(run);
             }
+        }
+
+        private static Brush? DiffLineColor(string line)
+        {
+            if (line.StartsWith("+++", StringComparison.Ordinal) ||
+                line.StartsWith("---", StringComparison.Ordinal) ||
+                line.StartsWith("@@", StringComparison.Ordinal))
+                return s_diffHunk;
+            if (line.StartsWith("+", StringComparison.Ordinal)) return s_diffAdd;
+            if (line.StartsWith("-", StringComparison.Ordinal)) return s_diffRem;
+            return null;
         }
 
         private static bool IsLightBackground(Brush? brush)

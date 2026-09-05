@@ -197,7 +197,9 @@ namespace TeronClaudeCodeVS.ViewModels
 
         public bool HasMarkdownDetail => DetailMarkdown != null;
 
-        public FlowDocument? DetailDocument => DetailMarkdown is string md ? MarkdownRenderer.Render(md) : null;
+        public FlowDocument? DetailDocument => DetailMarkdown is string md
+            ? MarkdownRenderer.Render(md, ToolPresentation.GetFullPath(ToolName, _input))
+            : null;
 
         public FlowDocument Document => DetailDocument ?? new FlowDocument();
 
@@ -336,7 +338,7 @@ namespace TeronClaudeCodeVS.ViewModels
 
             // When DiffViewer already shows the diff, don't also render it as a ```diff fence.
             string? detail = RawDiff == null ? ToolPresentation.GetDetailMarkdown(toolName, input, null, false) : null;
-            DetailDocument = detail != null ? MarkdownRenderer.Render(detail) : null;
+            DetailDocument = detail != null ? MarkdownRenderer.Render(detail, FullPath) : null;
 
             AllowCommand = new RelayCommand(() => Resolve(true, false, null, respond), () => !IsResolved);
             AllowForSessionCommand = new RelayCommand(() => Resolve(true, true, null, respond), () => !IsResolved);
