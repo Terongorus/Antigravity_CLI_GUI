@@ -1229,7 +1229,8 @@
                         ToolTip="Start a new Claude Code session"
                         AutomationProperties.AutomationId="NewSessionButton"
                         AutomationProperties.Name="New session">
-                    <TextBlock Text="✚"/>
+                    <Path x:Name="NewSessionIconPath" Stretch="Uniform" Width="14" Height="14"
+                          Fill="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
                 </Button>
 
                 <Button Grid.Column="3" x:Name="HistoryButton" Style="{StaticResource IconButtonStyle}"
@@ -1237,7 +1238,8 @@
                         ToolTip="Session history"
                         AutomationProperties.AutomationId="HistoryButton"
                         AutomationProperties.Name="Session history">
-                    <TextBlock Text="☰"/>
+                    <Path Data="{StaticResource Icon_SessionHistory}" Stretch="Uniform" Width="14" Height="14"
+                          Fill="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
                 </Button>
 
                 <ToggleButton Grid.Column="4" Content="Raw" Style="{StaticResource PillToggleStyle}"
@@ -1270,7 +1272,8 @@
                         ToolTip="Claude Code settings"
                         AutomationProperties.AutomationId="SettingsButton"
                         AutomationProperties.Name="Claude Code settings">
-                    <TextBlock Text="⚙"/>
+                    <Path x:Name="SettingsIconPath" Stretch="Uniform" Width="14" Height="14"
+                          Fill="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
                 </Button>
             </Grid>
         </Border>

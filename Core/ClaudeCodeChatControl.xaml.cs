@@ -169,6 +169,8 @@ namespace TeronClaudeCodeVS.Core
             StopIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Stop_Light" : "Icon_Stop_Dark");
             AddIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Add_Light" : "Icon_Add_Dark");
             ToolsIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Tools_Light" : "Icon_Tools_Dark");
+            NewSessionIconPath.Data = (Geometry)FindResource(isDark ? "Icon_NewSession_Light" : "Icon_NewSession_Dark");
+            SettingsIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Settings_Light" : "Icon_Settings_Dark");
             RefreshMicIcon();
         }
 
