@@ -815,48 +815,64 @@
                     -->
                     <StackPanel Orientation="Horizontal" Margin="0,10,0,0"
                                 Visibility="{Binding IsResolved, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=Invert}">
-                        <Button Content="1  Allow" Command="{Binding AllowCommand}" Style="{StaticResource PrimaryButtonStyle}"
+                        <Button Content="1. Allow" Command="{Binding AllowCommand}" Style="{StaticResource PrimaryButtonStyle}"
                                 VerticalAlignment="Top"
                                 Padding="14,6" Margin="0,0,8,0" MinWidth="72"/>
-                        <Button Content="2  Allow for Session" Command="{Binding AllowForSessionCommand}"
+                        <Button Content="2. Allow for Session" Command="{Binding AllowForSessionCommand}"
                                 Style="{StaticResource SecondaryButtonStyle}"
                                 Width="Auto" Height="Auto" VerticalAlignment="Top"
                                 Padding="14,6" Margin="0,0,8,0" MinWidth="120"/>
-                        <Button Content="3  Deny" Command="{Binding DenyCommand}"
+                        <Button Content="3. Deny" Command="{Binding DenyCommand}"
                                 Style="{StaticResource DenyButtonStyle}"
                                 MinWidth="72" Padding="14,6"/>
                     </StackPanel>
 
-                    <!-- UX-3: redirect instead of a dead-end deny. -->
+                    <!--
+                        UX-3: redirect instead of a dead-end deny. The field itself is always
+                        present rather than behind a "Tell Claude what to do instead" toggle
+                        button - clicking that button only ever led to this same field, so the
+                        click bought nothing. Its label lives as a placeholder instead (matching
+                        the composer's own InputPlaceholder pattern below), visible whenever
+                        RedirectText is empty and gone the moment there is real text in the box.
+                    -->
                     <StackPanel Margin="0,8,0,0"
                                 Visibility="{Binding IsResolved, Converter={StaticResource BoolToVisibilityConverter}, ConverterParameter=Invert}">
-                        <StackPanel Orientation="Horizontal">
-                            <Button Content="Tell Claude what to do instead"
-                                    Command="{Binding ToggleRedirectCommand}"
-                                    Style="{StaticResource SecondaryButtonStyle}"
-                                    Padding="8,3" FontSize="{StaticResource FontSizeChrome}"
-                                    HorizontalAlignment="Left"
-                                    AutomationProperties.AutomationId="PermissionRedirectToggle"/>
-                            <TextBlock Text="1 / 2 / 3 to choose · Esc to cancel"
-                                       Style="{StaticResource KeyHintStyle}" VerticalAlignment="Center"/>
-                        </StackPanel>
+                        <TextBlock Text="1 / 2 / 3 to choose · Esc to cancel"
+                                   Style="{StaticResource KeyHintStyle}" Margin="0,0,0,6"/>
 
-                        <Grid Margin="0,6,0,0"
-                              Visibility="{Binding IsRedirectVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1"
-                                    CornerRadius="{StaticResource RadiusControl}" Padding="6,3" Margin="0,0,6,0">
-                                <TextBox Text="{Binding RedirectText, UpdateSourceTrigger=PropertyChanged}"
-                                         BorderThickness="0" Background="Transparent" TextWrapping="Wrap"
-                                         AcceptsReturn="False" MinHeight="20"
-                                         Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"
-                                         CaretBrush="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"
-                                         FontSize="{StaticResource FontSizeBody}"
-                                         AutomationProperties.AutomationId="PermissionRedirectBox"/>
-                            </Border>
+                            <Grid Grid.Column="0" Margin="0,0,6,0">
+                                <Border BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1"
+                                        CornerRadius="{StaticResource RadiusControl}" Padding="6,3">
+                                    <TextBox x:Name="RedirectBox"
+                                             Text="{Binding RedirectText, UpdateSourceTrigger=PropertyChanged}"
+                                             BorderThickness="0" Background="Transparent" TextWrapping="Wrap"
+                                             AcceptsReturn="False" MinHeight="20"
+                                             Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"
+                                             CaretBrush="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"
+                                             FontSize="{StaticResource FontSizeBody}"
+                                             AutomationProperties.AutomationId="PermissionRedirectBox"/>
+                                </Border>
+                                <TextBlock Text="Tell Claude what to do instead" IsHitTestVisible="False"
+                                           Margin="10,0,0,0" VerticalAlignment="Center" Opacity="0.45"
+                                           FontSize="{StaticResource FontSizeBody}"
+                                           Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Text, ElementName=RedirectBox}" Value="">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
                             <Button Grid.Column="1" Content="Send" Command="{Binding SendRedirectCommand}"
                                     Style="{StaticResource PrimaryButtonStyle}" Padding="12,4"
                                     AutomationProperties.AutomationId="PermissionRedirectSend"/>

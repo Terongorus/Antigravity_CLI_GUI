@@ -1073,8 +1073,8 @@ namespace TeronClaudeCodeVS.ViewModels
                 entry.DialogTitle,
                 entry.DialogDescription,
                 "claude " + entry.SlashCommand,
-                "1  Continue in Terminal",
-                "2  Never mind",
+                "1. Continue in Terminal",
+                "2. Never mind",
                 accepted => Task.FromResult(accepted
                     ? OpenInTerminal(entry.SlashCommand)
                     : "Never mind."));
@@ -1161,8 +1161,8 @@ namespace TeronClaudeCodeVS.ViewModels
                 "Send this feedback to Anthropic?",
                 "Your description is uploaded together with this session's transcript. Do not send anything you would not want shared.",
                 report,
-                "1  Send feedback",
-                "2  Never mind",
+                "1. Send feedback",
+                "2. Never mind",
                 async accepted =>
                 {
                     if (!accepted)
@@ -1216,8 +1216,8 @@ namespace TeronClaudeCodeVS.ViewModels
                 "Enable Remote Control for this session?",
                 "This session becomes visible and drivable from claude.ai/code on any device signed in to your account. Run /remote-control again to turn it off.",
                 null,
-                "1  Enable Remote Control",
-                "2  Never mind",
+                "1. Enable Remote Control",
+                "2. Never mind",
                 async accepted =>
                 {
                     if (!accepted)
@@ -1495,8 +1495,16 @@ namespace TeronClaudeCodeVS.ViewModels
                 if (_currentAssistantMessage == null)
                     EnsureAssistantMessage();
                 _currentAssistantMessage!.Blocks.Add(request);
-                PendingPermissionRequest = request;
+
+                // Opened before PendingPermissionRequest is set, not after: opening a real VS
+                // document window activates it and steals keyboard focus, and the view's
+                // PendingPermissionRequest handler answers by focusing InputBox right back (see
+                // OnViewModelPropertyChanged) - so the diff tab has to steal focus and lose it
+                // again BEFORE that happens, or every auto-opened diff tab leaves the 1/2/3
+                // shortcuts silently dead. Found live 2026-09-06: with "open diff tab for edits"
+                // on, this was the order every single time.
                 AutoOpenDiffTab(request);
+                PendingPermissionRequest = request;
 
                 StatusText = "⚠ Approval required — see chat";
                 PermissionRequestAdded?.Invoke(this, EventArgs.Empty);

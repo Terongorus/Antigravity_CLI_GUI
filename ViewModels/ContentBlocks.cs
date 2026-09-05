@@ -375,19 +375,9 @@ namespace TeronClaudeCodeVS.ViewModels
             set => SetField(ref _redirectText, value);
         }
 
-        private bool _isRedirectVisible;
-        public bool IsRedirectVisible
-        {
-            get => _isRedirectVisible;
-            set => SetField(ref _isRedirectVisible, value);
-        }
-
         public ICommand AllowCommand { get; }
         public ICommand AllowForSessionCommand { get; }
         public ICommand DenyCommand { get; }
-
-        /// <summary>Reveals the redirect box; a second invoke hides it again.</summary>
-        public ICommand ToggleRedirectCommand { get; }
 
         /// <summary>Denies the call, passing <see cref="RedirectText"/> as the reason.</summary>
         public ICommand SendRedirectCommand { get; }
@@ -415,7 +405,6 @@ namespace TeronClaudeCodeVS.ViewModels
             AllowForSessionCommand = new RelayCommand(() => Resolve(true, true, null, respond), () => !IsResolved);
             DenyCommand = new RelayCommand(() => Resolve(false, false, null, respond), () => !IsResolved);
 
-            ToggleRedirectCommand = new RelayCommand(() => IsRedirectVisible = !IsRedirectVisible, () => !IsResolved);
             SendRedirectCommand = new RelayCommand(
                 () => Resolve(false, false, RedirectText.Trim(), respond),
                 () => !IsResolved && !string.IsNullOrWhiteSpace(RedirectText));
@@ -439,7 +428,6 @@ namespace TeronClaudeCodeVS.ViewModels
         {
             if (IsResolved) return;
             IsResolved = true;
-            IsRedirectVisible = false;
             ResolutionText = allow
                 ? (forSession ? "Allowed for this session" : "Allowed")
                 : (denyMessage != null ? $"Redirected: {denyMessage}" : "Denied");
