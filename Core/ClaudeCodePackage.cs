@@ -50,6 +50,32 @@ namespace TeronClaudeCodeVS.Core
 
         internal void ShowOptions() => ShowOptionPage(typeof(ClaudeCodeOptionsPage));
 
+        /// <summary>
+        /// Reclaims focus after opening something that steals it away from this tool window - a
+        /// diff tab is a real VS document window, and activating it moves VS's own pane focus to
+        /// the editor area, not just WPF keyboard focus within our own window. Retargeting InputBox
+        /// alone (<c>ClaudeCodeChatControl.FocusInput</c>'s job) cannot undo that: the pane itself
+        /// has to be reactivated first, exactly like the UX-6 global shortcut's own
+        /// ShowToolWindowAsync-then-FocusInput sequence (<see cref="Commands.ClaudeCodeCommand.ShowWindow"/>)
+        /// already has to for the same reason. Found live 2026-09-06: reordering AutoOpenDiffTab
+        /// before setting PendingPermissionRequest was not enough on its own - VS's window
+        /// activation for the new tab does not finish synchronously within that call, so it still
+        /// won the race and left 1/2/3 dead until the user clicked back into the tool window by
+        /// hand. Fire-and-forget: called from a ViewModel or a background dispatch that cannot
+        /// itself await a JoinableTask.
+        /// </summary>
+        internal void ReactivateToolWindowAndFocusInput()
+        {
+            _ = JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ShowToolWindowAsync(typeof(ClaudeCodeToolWindow), 0, true, DisposalToken);
+
+                await JoinableTaskFactory.SwitchToMainThreadAsync(DisposalToken);
+                if (FindToolWindow(typeof(ClaudeCodeToolWindow), 0, false) is ClaudeCodeToolWindow { Content: ClaudeCodeChatControl control })
+                    control.FocusInput();
+            });
+        }
+
         private IClassificationTypeRegistryService? _classificationTypeRegistry;
         private IClassificationFormatMapService? _classificationFormatMapService;
 

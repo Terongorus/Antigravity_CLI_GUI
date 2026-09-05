@@ -1014,14 +1014,11 @@ namespace TeronClaudeCodeVS.Core
         /// </summary>
         private void OnOpenDiffTabClicked(object sender, RoutedEventArgs e)
         {
+            // Focus reclaim (both VS's own pane activation and WPF keyboard focus) happens inside
+            // ChatSessionViewModel.OpenDiffTab itself now - see
+            // ClaudeCodePackage.ReactivateToolWindowAndFocusInput for why a plain
+            // Keyboard.Focus(InputBox) here was not enough on its own.
             _vm.OpenDiffTab(((FrameworkElement)sender).DataContext);
-
-            // Opening a real VS document window activates it, which steals keyboard focus away
-            // from the tool window - the same focus-stealing that had to be worked around for the
-            // auto-open path (see the AutoOpenDiffTab/PendingPermissionRequest ordering note in
-            // ChatSessionViewModel). Reclaiming it here keeps 1/2/3 live for whichever card this
-            // button belongs to right after a manual glance at the diff.
-            Keyboard.Focus(InputBox);
         }
 
         /// <summary>GAP-1: one of the five Customize rows was picked - show its hand-off card.</summary>

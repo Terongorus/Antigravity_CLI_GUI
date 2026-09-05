@@ -1597,6 +1597,8 @@ namespace TeronClaudeCodeVS.ViewModels
             string? reason = VsDiffTab.Open(toolName, input, applied, _workingDirectory, CurrentSessionId, toolUseId);
             if (reason != null)
                 AddSystemNotice(reason, isError: true);
+            else
+                ClaudeCodePackage.Instance?.ReactivateToolWindowAndFocusInput();
         }
 
         /// <summary>
@@ -1621,7 +1623,12 @@ namespace TeronClaudeCodeVS.ViewModels
 
             string? reason = VsDiffTab.Open(request.ToolName, request.Input, alreadyApplied: false,
                                             _workingDirectory, CurrentSessionId, null);
-            if (reason == null || _autoDiffTabFailureReported)
+            if (reason == null)
+            {
+                ClaudeCodePackage.Instance?.ReactivateToolWindowAndFocusInput();
+                return;
+            }
+            if (_autoDiffTabFailureReported)
                 return;
 
             // Say it once. The inline diff on the card is still there, so a repeated notice on
