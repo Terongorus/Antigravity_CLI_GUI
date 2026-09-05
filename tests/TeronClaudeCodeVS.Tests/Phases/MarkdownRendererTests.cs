@@ -38,6 +38,35 @@ namespace TeronClaudeCodeVS.Tests.Phases
                 .Where(s => s.Background is SolidColorBrush { Color.A: > 0 })
                 .ToList();
 
+        /// <summary>
+        /// Found live 2026-09-06: the CLI's shell-execution tool is literally named "PowerShell"
+        /// on Windows, not "Bash" - ToolPresentation only special-cased "Bash", so a PowerShell
+        /// call fell through to the generic default handler and showed the raw tool-call JSON
+        /// (truncated) as its one-line summary and a "```json" dump of that same JSON as its detail
+        /// block, instead of the description and the actual command. "PowerShell" is now treated
+        /// as an alias of "Bash" in GetSummary/GetDetailMarkdown (not GetDisplayName - its own name
+        /// is more informative there than the generic "Run command" title).
+        /// </summary>
+        [Fact]
+        public void A_PowerShell_call_is_summarised_and_detailed_like_a_Bash_call_not_dumped_as_JSON()
+        {
+            var input = new Newtonsoft.Json.Linq.JObject
+            {
+                ["command"] = "dotnet build --no-restore",
+                ["description"] = "Verify project builds without errors",
+            };
+
+            string summary = ToolPresentation.GetSummary("PowerShell", input);
+            Assert.Equal("Verify project builds without errors", summary);
+            Assert.DoesNotContain("{", summary);
+
+            string? detail = ToolPresentation.GetDetailMarkdown("PowerShell", input, output: null, isError: false);
+            Assert.NotNull(detail);
+            Assert.Contains("```powershell", detail);
+            Assert.Contains("dotnet build --no-restore", detail!);
+            Assert.DoesNotContain("```json", detail!);
+        }
+
         [Fact]
         public void A_command_followed_by_its_output_colors_both_code_blocks_the_same_way()
         {

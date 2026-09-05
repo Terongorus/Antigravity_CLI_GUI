@@ -18,7 +18,7 @@ namespace TeronClaudeCodeVS.ViewModels
             "Read" => "\U0001F4C4",
             "Write" => "\U0001F4DD",
             "Edit" or "NotebookEdit" => "✏️",
-            "Bash" or "BashOutput" or "KillShell" => "\U0001F4BB",
+            "Bash" or "PowerShell" or "BashOutput" or "KillShell" => "\U0001F4BB",
             "Glob" => "\U0001F5C2️",
             "Grep" => "\U0001F50D",
             "WebFetch" => "\U0001F310",
@@ -40,6 +40,13 @@ namespace TeronClaudeCodeVS.ViewModels
                 case "Edit": return "Edit file";
                 case "NotebookEdit": return "Edit notebook";
                 case "Bash": return "Run command";
+                // No "PowerShell" case here on purpose: the CLI uses that literal tool name for
+                // shell execution on Windows (confirmed live 2026-09-06 - it is not an alias, it
+                // never sends "Bash" on this platform), and its own name is more informative than
+                // the generic "Run command" title Bash gets, so falling through to the default
+                // `return toolName;` below is the desired result. It IS treated as an alias of
+                // "Bash" everywhere else (icon, summary, detail command block) - see GetIcon,
+                // GetSummary, GetDetailMarkdown.
                 case "BashOutput": return "Command output";
                 case "KillShell": return "Stop command";
                 case "Glob": return "Find files";
@@ -108,6 +115,7 @@ namespace TeronClaudeCodeVS.ViewModels
                     return ShortenPath(S(input, "notebook_path"));
 
                 case "Bash":
+                case "PowerShell":
                 {
                     string? desc = S(input, "description");
                     string cmd = Truncate(S(input, "command") ?? "", 100);
@@ -261,8 +269,9 @@ namespace TeronClaudeCodeVS.ViewModels
                 }
 
                 case "Bash":
+                case "PowerShell":
                 {
-                    sb.AppendLine("```bash");
+                    sb.AppendLine(toolName == "PowerShell" ? "```powershell" : "```bash");
                     sb.AppendLine(S(input, "command") ?? "");
                     sb.AppendLine("```");
                     break;
