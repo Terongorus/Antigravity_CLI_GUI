@@ -70,6 +70,7 @@
 
         <!-- Converters -->
         <controls:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+        <controls:WidthMinusOffsetConverter x:Key="WidthMinusOffsetConverter"/>
         <controls:NullToVisibilityConverter x:Key="NullToVisibilityConverter"/>
         <controls:CountToVisibilityConverter x:Key="CountToVisibilityConverter"/>
         <controls:ToolStatusToBrushConverter x:Key="ToolStatusToBrushConverter"/>
@@ -1162,7 +1163,8 @@
                         BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1"
                         TextElement.Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"
                         CornerRadius="10,10,2,10" Padding="10,6"
-                        MaxWidth="460">
+                        MaxWidth="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=ScrollViewer},
+                                            Converter={StaticResource WidthMinusOffsetConverter}, ConverterParameter='460,120'}">
                     <StackPanel>
                         <!--
                             Image/file/code-reference attachments wrap in their own horizontal row,

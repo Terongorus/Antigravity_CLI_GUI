@@ -23,6 +23,49 @@ namespace TeronClaudeCodeVS.Controls
             => throw new NotSupportedException();
     }
 
+    /// <summary>
+    /// A container's ActualWidth minus a fixed offset, optionally also capped at a maximum -
+    /// used to cap a sent-message bubble's own MaxWidth to whatever room is actually left in the
+    /// tool window, instead of a bare literal MaxWidth that stays fixed regardless of how narrow
+    /// the window gets. Found live 2026-09-06: an Auto-sized Grid column doesn't shrink on its own
+    /// just because its parent got narrower - it renders at its full desired width regardless, and
+    /// since the row is right-aligned, the overflow crops off the LEFT edge, hiding the "…"
+    /// message-actions button that sits there rather than clipping the bubble's own text.
+    /// <para>
+    /// ConverterParameter is either a bare offset ("120") or "cap,offset" ("460,120") to also keep
+    /// the old fixed upper bound on a wide window, so a docked-out-as-a-tab window doesn't stretch
+    /// a bubble absurdly wide just because there is room to.
+    /// </para>
+    /// </summary>
+    public sealed class WidthMinusOffsetConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            double width = value is double d ? d : 0;
+            double cap = double.PositiveInfinity;
+            double offset = 0;
+
+            if (parameter is string s)
+            {
+                string[] parts = s.Split(',');
+                if (parts.Length == 2)
+                {
+                    double.TryParse(parts[0], NumberStyles.Any, CultureInfo.InvariantCulture, out cap);
+                    double.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out offset);
+                }
+                else
+                {
+                    double.TryParse(parts[0], NumberStyles.Any, CultureInfo.InvariantCulture, out offset);
+                }
+            }
+
+            return Math.Min(cap, Math.Max(0, width - offset));
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+            => throw new NotSupportedException();
+    }
+
     /// <summary>Null -> Collapsed, non-null -> Visible. Pass ConverterParameter="Invert" to flip the mapping.</summary>
     public sealed class NullToVisibilityConverter : IValueConverter
     {
