@@ -42,16 +42,63 @@ namespace TeronClaudeCodeVS.ViewModels
         public void Append(string delta) => Text += delta;
     }
 
-    /// <summary>A pasted screenshot attached to a sent user message - shown as a thumbnail.</summary>
+    /// <summary>A pasted screenshot attached to a sent user message - shown as a thumbnail.
+    /// Clicking it opens a full-size preview, matching the official VS Code extension's own
+    /// click-to-preview behavior for a sent image attachment.</summary>
     public sealed class ImageAttachmentViewModel(ImageSource thumbnail) : ContentBlockViewModel
     {
         public ImageSource Thumbnail { get; } = thumbnail;
+
+        public ICommand OpenCommand { get; } = new RelayCommand(() =>
+        {
+            // The full-resolution decode, not a scaled-down display copy - see PendingImageAttachment's
+            // own doc comment on Thumbnail. No VS document/file is involved: a pasted screenshot never
+            // had one, so a lightweight in-app viewer is the only thing that works for both origins.
+            Controls.ImagePreviewWindow preview = new(thumbnail);
+            preview.Show();
+        });
     }
 
-    /// <summary>A dropped text/code/PDF file attached to a sent user message - shown as a filename chip.</summary>
-    public sealed class FileAttachmentViewModel(string title) : ContentBlockViewModel
+    /// <summary>A dropped text/code/PDF file attached to a sent user message - shown as a filename
+    /// chip. Clicking it opens the content: a text/code file opens in a real VS editor tab, a PDF
+    /// launches the OS's own default viewer (VS has no built-in PDF renderer to open one in). The
+    /// original path is never retained (see the drop handler this comes from) so this always
+    /// re-materializes the ALREADY-CAPTURED content into a fresh temp file rather than assuming the
+    /// source file still exists where it was dropped from.</summary>
+    public sealed class FileAttachmentViewModel(string title, bool isPdf, string content) : ContentBlockViewModel
     {
         public string Title { get; } = title;
+
+        public ICommand OpenCommand { get; } = new RelayCommand(() => _ = OpenAsync(title, isPdf, content));
+
+        private static async Task OpenAsync(string title, bool isPdf, string content)
+        {
+            try
+            {
+                string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "TeronClaudeCodeVS-attachments",
+                    Guid.NewGuid().ToString("N"));
+                System.IO.Directory.CreateDirectory(dir);
+                string tempPath = System.IO.Path.Combine(dir, title);
+
+                if (isPdf)
+                {
+                    System.IO.File.WriteAllBytes(tempPath, Convert.FromBase64String(content));
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tempPath)
+                    {
+                        UseShellExecute = true,
+                    });
+                }
+                else
+                {
+                    System.IO.File.WriteAllText(tempPath, content);
+                    await MarkdownRenderer.OpenFileReferenceAsync(tempPath, null, null);
+                }
+            }
+            catch
+            {
+                // Opening a preview must never crash the chat over it.
+            }
+        }
     }
 
     /// <summary>

@@ -552,16 +552,24 @@
         </DataTemplate>
 
         <DataTemplate x:Key="ImageAttachmentTemplate" DataType="{x:Type vm:ImageAttachmentViewModel}">
-            <Border CornerRadius="{StaticResource RadiusCard}" Margin="0,0,0,6" MaxWidth="260" ClipToBounds="True">
+            <Border CornerRadius="{StaticResource RadiusCard}" Margin="0,0,0,6" MaxWidth="260" ClipToBounds="True"
+                    Cursor="Hand" ToolTip="Open full size">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding OpenCommand}"/>
+                </Border.InputBindings>
                 <Image Source="{Binding Thumbnail}" Stretch="Uniform" MaxHeight="200"/>
             </Border>
         </DataTemplate>
 
         <DataTemplate x:Key="FileAttachmentTemplate" DataType="{x:Type vm:FileAttachmentViewModel}">
-            <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,0,6" Padding="6,3" Background="{StaticResource CardBackgroundBrush}">
+            <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,0,6" Padding="6,3" Background="{StaticResource CardBackgroundBrush}"
+                    Cursor="Hand" ToolTip="Open">
+                <Border.InputBindings>
+                    <MouseBinding MouseAction="LeftClick" Command="{Binding OpenCommand}"/>
+                </Border.InputBindings>
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="📄" Margin="0,0,5,0"/>
-                    <TextBlock Text="{Binding Title}" FontSize="{StaticResource FontSizeBody}"/>
+                    <TextBlock Text="{Binding Title}" FontSize="{StaticResource FontSizeBody}" TextDecorations="Underline"/>
                 </StackPanel>
             </Border>
         </DataTemplate>

@@ -82,3 +82,29 @@ All three items need a real F5 pass: the attachment chip's actual look/click-to-
 real Claude response actually mentions a bare filename that gets linked correctly, and whether the
 new neutral user bubble reads well against both VS themes in practice - Kaloyan's own plan for this
 batch.
+
+## Addendum - every attachment is now interactive, not just code references
+
+Kaloyan's own follow-up, from a GitHub Copilot Chat screenshot of a *sent* message: image/file
+attachments there are clickable too - an image opens a full-size preview. Extended to both existing
+attachment kinds so nothing in a sent message is inert:
+
+- `ImageAttachmentViewModel.OpenCommand` opens a new `Controls/ImagePreviewWindow` - a small,
+  non-modal WPF window (`ScrollViewer` + `Image`, capped at 1200x900) showing the already-decoded
+  full-resolution bitmap. Deliberately not a VS document tab: a pasted screenshot never had a file
+  on disk to open one for, so an in-app viewer is the only thing that works for a pasted **and** a
+  dropped image alike.
+- `FileAttachmentViewModel` now carries the attachment's actual content (previously discarded -
+  only `Title` was kept), and its `OpenCommand` re-materializes that content into a fresh temp file
+  and opens it: a text/code file through the same `MarkdownRenderer.OpenFileReferenceAsync` real
+  editor tab everything else uses, a PDF through the OS's own default viewer via
+  `Process.Start(UseShellExecute: true)` (VS has no built-in PDF renderer to open one in). The
+  original dropped-from path is never assumed to still exist, since it was never retained in the
+  first place.
+- Both templates gained `Cursor="Hand"` + a `MouseBinding` on their existing `Border` rather than
+  restructuring into a `Button` (matches how little `CodeReferenceAttachmentTemplate` needed to
+  change vs. how it looks).
+
+Build clean, same 193/194. Not separately unit-tested (temp-file I/O and spawning a real window/
+process aren't worth faking through a mock for what's fundamentally "click a button, something
+external happens") - covered by the same live F5 pass as the rest of this phase.

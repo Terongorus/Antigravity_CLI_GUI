@@ -861,7 +861,7 @@ namespace TeronClaudeCodeVS.ViewModels
             foreach (PendingImageAttachment image in PendingImages)
                 userMessage.Blocks.Add(new ImageAttachmentViewModel(image.Thumbnail));
             foreach (PendingFileAttachment file in PendingFiles)
-                userMessage.Blocks.Add(new FileAttachmentViewModel(file.Title));
+                userMessage.Blocks.Add(new FileAttachmentViewModel(file.Title, file.IsPdf, file.Content));
             foreach (PendingCodeReferenceAttachment codeRef in PendingCodeReferences)
                 userMessage.Blocks.Add(new CodeReferenceAttachmentViewModel(
                     codeRef.FullPath, codeRef.DisplayTitle, codeRef.StartLine, codeRef.EndLine));
