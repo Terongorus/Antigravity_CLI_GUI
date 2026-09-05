@@ -18,6 +18,7 @@
             -->
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="pack://application:,,,/TeronClaudeCodeVS;component/Core/ChatTheme.xaml"/>
+                <ResourceDictionary Source="pack://application:,,,/TeronClaudeCodeVS;component/Resources/IconGeometries.xaml"/>
             </ResourceDictionary.MergedDictionaries>
 
         <!--
@@ -1211,8 +1212,8 @@
 
                 <Border Grid.Column="0" Width="22" Height="22" CornerRadius="{StaticResource RadiusControl}"
                         Background="{StaticResource ClaudeAccentBrush}" VerticalAlignment="Center">
-                    <TextBlock Text="✳" FontSize="{StaticResource GlyphSize}" FontWeight="Bold" Foreground="White"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <Path Data="{StaticResource Icon_ClaudeLogo}" Fill="White" Stretch="Uniform"
+                          Width="12" Height="12" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Border>
 
                 <StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center">
@@ -1381,8 +1382,8 @@
                         Visibility="{Binding Messages.Count, Converter={StaticResource CountToVisibilityConverter}}">
                 <Border Width="40" Height="40" CornerRadius="{StaticResource RadiusCard}"
                         Background="{StaticResource ClaudeAccentBrush}" HorizontalAlignment="Center">
-                    <TextBlock Text="✳" FontSize="{StaticResource FontSizeBody}" FontWeight="Bold" Foreground="White"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <Path Data="{StaticResource Icon_ClaudeLogo}" Fill="White" Stretch="Uniform"
+                          Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Border>
                 <!--
                     The AutomationId sits on this TextBlock rather than on the panel: WPF Panels
@@ -1849,7 +1850,8 @@
                             ToolTip="Add"
                             AutomationProperties.AutomationId="AddMenuButton"
                             AutomationProperties.Name="Add">
-                        <TextBlock Text="+" FontWeight="SemiBold"/>
+                        <Path x:Name="AddIconPath" Stretch="Uniform" Width="11" Height="11"
+                              Fill="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
                     </Button>
                     <Popup x:Name="AddMenuPopup" PlacementTarget="{Binding ElementName=AddMenuButton}"
                            Placement="Top" StaysOpen="False" AllowsTransparency="True"
@@ -2145,7 +2147,8 @@
                             ToolTip="Usage, account &amp; commands"
                             AutomationProperties.AutomationId="PaletteButton"
                             AutomationProperties.Name="Usage, account and commands">
-                        <TextBlock Text="/"/>
+                        <Path x:Name="ToolsIconPath" Stretch="Uniform" Width="11" Height="11"
+                              Fill="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
                     </Button>
 
                     <!-- Model -->
@@ -2996,18 +2999,18 @@
                                 Click="OnMicClicked"
                                 AutomationProperties.AutomationId="MicButton"
                                 AutomationProperties.Name="Dictate">
-                            <TextBlock x:Name="MicGlyph" Text="🎤" FontSize="{StaticResource GlyphSize}">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
+                            <Path x:Name="MicIconPath" Stretch="Uniform" Width="14" Height="14">
+                                <Path.Style>
+                                    <Style TargetType="Path">
+                                        <Setter Property="Fill" Value="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsDictating}" Value="True">
-                                                <Setter Property="Foreground" Value="{StaticResource ErrorBrush}"/>
-                                                <Setter Property="Text" Value="⏺"/>
+                                                <Setter Property="Fill" Value="{StaticResource ErrorBrush}"/>
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
+                                </Path.Style>
+                            </Path>
                         </Button>
 
                         <Grid>
@@ -3015,13 +3018,14 @@
                                     Click="OnSendClicked" Margin="6,0,0,0" ToolTip="Send (Enter)"
                                     AutomationProperties.AutomationId="SendButton"
                                     AutomationProperties.Name="Send">
-                                <TextBlock Text="➤" FontSize="{StaticResource GlyphSize}"/>
+                                <Path x:Name="SendIconPath" Stretch="Uniform" Width="14" Height="14" Fill="White"/>
                             </Button>
                             <Button x:Name="StopButton" Style="{StaticResource StopButtonStyle}"
                                     Click="OnStopClicked" Margin="6,0,0,0" Visibility="Collapsed" ToolTip="Stop"
                                     AutomationProperties.AutomationId="StopButton"
                                     AutomationProperties.Name="Stop">
-                                <TextBlock Text="■" FontSize="{StaticResource GlyphSize}"/>
+                                <Path x:Name="StopIconPath" Stretch="Uniform" Width="14" Height="14"
+                                      Fill="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
                             </Button>
                         </Grid>
                     </StackPanel>

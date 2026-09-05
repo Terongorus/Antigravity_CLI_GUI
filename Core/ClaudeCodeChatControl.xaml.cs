@@ -1,4 +1,5 @@
-﻿using TeronClaudeCodeVS.ViewModels;
+﻿using TeronClaudeCodeVS.Controls;
+using TeronClaudeCodeVS.ViewModels;
 using Community.VisualStudio.Toolkit;
 using Microsoft.VisualStudio;
 using Microsoft.VisualStudio.Shell;
@@ -67,6 +68,13 @@ namespace TeronClaudeCodeVS.Core
                 return;
             }
             _initialized = true;
+
+            // Icon light/dark-variant selection needs the real VS theme API (ThemeService),
+            // deliberately never touched before Loaded - see ThemeService's own doc comment for
+            // why (the xUnit test harness constructs this control but never fires Loaded).
+            ThemeService.Instance.PropertyChanged += OnThemeChanged;
+            ThemeService.Instance.Refresh();
+            RefreshThemedIcons();
 
             var options = ClaudeCodePackage.Instance?.GetOptions();
 
@@ -144,6 +152,35 @@ namespace TeronClaudeCodeVS.Core
             StopDictation();
             _voice?.Dispose();
             _voice = null;
+            ThemeService.Instance.PropertyChanged -= OnThemeChanged;
+        }
+
+        private void OnThemeChanged(object sender, PropertyChangedEventArgs e) => RefreshThemedIcons();
+
+        /// <summary>
+        /// Picks the correct half of every _light/_dark icon pair for the current VS theme (see
+        /// ThemeService and Resources/IconGeometries.xaml for why the suffixes are backwards from
+        /// what they look like). Called once at Loaded and again on every live theme change.
+        /// </summary>
+        private void RefreshThemedIcons()
+        {
+            bool isDark = ThemeService.Instance.IsDarkTheme;
+            SendIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Send_Light" : "Icon_Send_Dark");
+            StopIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Stop_Light" : "Icon_Stop_Dark");
+            AddIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Add_Light" : "Icon_Add_Dark");
+            ToolsIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Tools_Light" : "Icon_Tools_Dark");
+            RefreshMicIcon();
+        }
+
+        /// <summary>The mic icon has a second axis besides theme - recording or not - so it is
+        /// refreshed separately from <see cref="RefreshThemedIcons"/> whenever either one changes.</summary>
+        private void RefreshMicIcon()
+        {
+            bool isDark = ThemeService.Instance.IsDarkTheme;
+            string key = _vm.IsDictating
+                ? (isDark ? "Icon_StopMic_Light" : "Icon_StopMic_Dark")
+                : (isDark ? "Icon_Mic_Light" : "Icon_Mic_Dark");
+            MicIconPath.Data = (Geometry)FindResource(key);
         }
 
         /// <summary>Real teardown for when the tool window itself is actually closing - called
@@ -416,6 +453,9 @@ namespace TeronClaudeCodeVS.Core
         {
             if (e.PropertyName == nameof(ChatSessionViewModel.IsBusy))
                 UpdateSendStopVisibility();
+
+            if (e.PropertyName == nameof(ChatSessionViewModel.IsDictating))
+                RefreshMicIcon();
 
             // UX-3/GAP-1/GAP-3: the 1/2/3 shortcuts in OnInputPreviewKeyDown only fire while
             // keyboard focus is inside InputBox, but nothing else puts focus there - it can just

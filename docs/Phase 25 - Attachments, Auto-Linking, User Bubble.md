@@ -211,3 +211,57 @@ not a fix:
 Build clean, 198/198 (194 + the 4 new `ResolveIndexedFile` tests). The chrome color, attachment
 layout, and dropdown feature are UI-only changes with no pure-logic surface to unit test - all three
 need the same live F5 pass as the rest of this phase before a release decision.
+
+## Addendum 3 - real icon set, replacing text/emoji glyphs and the placeholder "✳" mark
+
+Kaloyan supplied a real SVG icon set (`Resources/*.svg`: add, mic, send, stop, stop_mic, tools -
+each with a `_light`/`_dark` variant) plus the actual Claude "starburst" logo mark
+(`Resources/claude-logo.svg`), to replace the Unicode glyphs (➤, ■, 🎤/⏺, +, /) and the plain "✳"
+placeholder this UI has used since it was first built (see ClaudeCodeChatControl.xaml's own old
+comment: "we do not ship baseline's pixel-art robot... this uses the same accent mark").
+
+**Naming, per Kaloyan's own explicit correction**: `_light`/`_dark` in the filenames describe the
+icon's OWN drawn color, not which VS theme it belongs on - a `_light` (light-colored) icon is
+meant for a DARK Visual Studio theme, and vice versa. Backwards from the obvious reading, so it is
+called out here and in both files that act on it.
+
+- `Resources/IconGeometries.xaml` - each SVG's own `<path d="...">` ported to a WPF `Geometry`
+  resource. Two mechanical fixups were needed, not just a copy-paste, because WPF's Path
+  mini-language is close to but not identical to SVG's: an `F1` fill-rule prefix on every one
+  (SVG defaults to nonzero, WPF's `Geometry.Parse` defaults to EvenOdd - the "add" icon's
+  plus-shaped cutout depends on nonzero to render as a hole rather than inverting), and a space
+  inserted wherever an SVG optimizer glued two numbers across a second decimal point
+  (`3.965.282`, meaning `3.965` then `0.282`) - WPF's number tokenizer doesn't support that
+  specific SVG compression trick.
+- `Controls/ThemeService.cs` (new) - a small singleton exposing a live, bindable `IsDarkTheme`,
+  backed by `VSColorTheme.GetThemedColor(EnvironmentColors.ToolWindowBackgroundColorKey)`
+  (relative luminance) and kept current via `VSColorTheme.ThemeChanged`. Deliberately NOT reached
+  through a static XAML markup extension - that would call the real VS SDK theme API the moment
+  `ClaudeCodeChatControl.xaml` is parsed, which happens in every xUnit test that constructs the
+  control (same reason `ClaudeCodePackage.Instance` is never touched during construction there
+  either - see `ChatControl.cs`'s own note). Instead `ClaudeCodeChatControl.OnLoaded` calls
+  `ThemeService.Instance.Refresh()` once - a method the test harness never invokes, since it
+  deliberately never fires `Loaded` - and every icon `Path.Data` is set imperatively from
+  code-behind (`RefreshThemedIcons`/`RefreshMicIcon`), refreshed again on `ThemeService`'s
+  `PropertyChanged` and unsubscribed in `OnUnloaded` to avoid piling up subscriptions across the
+  tab-switch Loaded/Unloaded cycle this control already has to account for elsewhere.
+- The mic icon has a second, independent axis besides theme - recording or not - so it stays on
+  its own `RefreshMicIcon()`, called from both the theme-changed handler and
+  `OnViewModelPropertyChanged` on `ChatSessionViewModel.IsDictating` (replacing the old
+  `DataTrigger` that swapped the emoji `Text` and turned it red; the red-while-recording tint
+  itself is still a plain `DataTrigger`, just on `Path.Fill` instead of `TextBlock.Foreground`).
+- Every icon `Path` uses `Stretch="Uniform"` with an explicit target `Width`/`Height` rather than
+  any manual coordinate rescaling - it fits an arbitrary source coordinate system automatically
+  (needed here: every SVG uses a `0 0 24 24` viewBox except `stop_dark.svg`, which is `0 0 512
+  512`).
+- The Claude logo mark (`Icon_ClaudeLogo`) replaces the "✳" `TextBlock` in both the chat header
+  badge and the empty-state welcome badge. One geometry, no `_light`/`_dark` pair - it is drawn
+  white on the existing solid `ClaudeAccentBrush` square in both places, exactly like the "✳" it
+  replaces, not at its own native `#D97757` fill (which would disappear against the same-colored
+  badge background).
+
+Build clean, same 198/198 - no pure-logic surface changed, so no new tests; needs the same live F5
+pass as the rest of this phase, specifically to confirm each icon's shape rendered correctly (WPF's
+default EvenOdd-vs-SVG's-nonzero fill-rule difference, worked around above with `F1`, is exactly
+the kind of thing that can go quietly wrong without a live look) and that the light/dark variant
+picked for each theme is in fact the more legible one.
