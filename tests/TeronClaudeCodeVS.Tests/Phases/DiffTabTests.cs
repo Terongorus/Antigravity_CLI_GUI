@@ -232,10 +232,18 @@ namespace TeronClaudeCodeVS.Tests.Phases
             }
             finally
             {
+                // Deliberately cleans up only this test's own two subdirectories, never `root`
+                // itself: found live 2026-09-06 that a real, currently-open VS diff tab leaves its
+                // own read-only comparison files in that same shared temp root, and
+                // Directory.Delete(root, recursive: true) doesn't distinguish - it tried to nuke
+                // those too, threw UnauthorizedAccessException (not an IOException, so the old
+                // catch here didn't stop it), and failed the test on machine state this test does
+                // not own.
                 if (File.Exists(staleFile))
                     File.SetAttributes(staleFile, FileAttributes.Normal);
 
-                try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+                try { Directory.Delete(stale, recursive: true); } catch (IOException) { }
+                try { Directory.Delete(fresh, recursive: true); } catch (IOException) { }
             }
         }
 
