@@ -1902,6 +1902,13 @@ namespace TeronClaudeCodeVS.Core
         {
             if (_suppressAutoScroll) return;
 
+            // A width change (the docked tab being resized) can ALSO grow ExtentHeight, since
+            // narrower content re-wraps taller - indistinguishable from "new content arrived" by
+            // ExtentHeightChange alone. Found live 2026-09-06: resizing the tool window snapped the
+            // transcript to the bottom exactly like new content had just arrived, with nothing new
+            // to show. A genuine new-message growth never touches the viewport's own width.
+            if (e.ViewportWidthChange != 0) return;
+
             if (e.ExtentHeightChange > 0)
             {
                 bool wasAtBottom = e.VerticalOffset + e.ViewportHeight >= e.ExtentHeight - e.ExtentHeightChange - 1;
