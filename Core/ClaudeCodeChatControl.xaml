@@ -1854,7 +1854,7 @@
                             ToolTip="Add"
                             AutomationProperties.AutomationId="AddMenuButton"
                             AutomationProperties.Name="Add">
-                        <Path x:Name="AddIconPath" Stretch="Uniform" Width="11" Height="11"
+                        <Path Data="{StaticResource Icon_Add}" Stretch="Uniform" Width="11" Height="11"
                               Fill="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
                     </Button>
                     <Popup x:Name="AddMenuPopup" PlacementTarget="{Binding ElementName=AddMenuButton}"

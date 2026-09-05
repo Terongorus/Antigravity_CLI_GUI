@@ -167,7 +167,6 @@ namespace TeronClaudeCodeVS.Core
             bool isDark = ThemeService.Instance.IsDarkTheme;
             SendIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Send_Light" : "Icon_Send_Dark");
             StopIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Stop_Light" : "Icon_Stop_Dark");
-            AddIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Add_Light" : "Icon_Add_Dark");
             ToolsIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Tools_Light" : "Icon_Tools_Dark");
             NewSessionIconPath.Data = (Geometry)FindResource(isDark ? "Icon_NewSession_Light" : "Icon_NewSession_Dark");
             SettingsIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Settings_Light" : "Icon_Settings_Dark");
