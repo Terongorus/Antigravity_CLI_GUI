@@ -119,6 +119,32 @@ namespace TeronClaudeCodeVS.ViewModels
     }
 
     /// <summary>
+    /// The Active File / Selection chip staged in the input box, waiting to be sent with the next
+    /// message - a real attachment with a thumbnail, matching how the official VS Code extension
+    /// shows a code-like glyph for a code reference the same way it shows an image thumbnail for a
+    /// pasted screenshot, rather than the raw "@path#Lstart-Lend" text this used to be inserted as.
+    /// </summary>
+    public sealed class PendingCodeReferenceAttachment(string relativePath, string fullPath, int? startLine, int? endLine)
+    {
+        public string RelativePath { get; } = relativePath;
+        public string FullPath { get; } = fullPath;
+        public int? StartLine { get; } = startLine;
+        public int? EndLine { get; } = endLine;
+
+        public string FileName => System.IO.Path.GetFileName(RelativePath);
+
+        public string DisplayTitle => StartLine.HasValue
+            ? (StartLine == EndLine ? $"{FileName}:{StartLine}" : $"{FileName}:{StartLine}-{EndLine}")
+            : FileName;
+
+        /// <summary>The plain-text form the CLI actually understands - what Send prepends to the
+        /// typed message, out of sight of the visible bubble's own text block.</summary>
+        public string ReferenceText => StartLine.HasValue
+            ? (StartLine == EndLine ? $"@{RelativePath}#L{StartLine}" : $"@{RelativePath}#L{StartLine}-L{EndLine}")
+            : $"@{RelativePath}";
+    }
+
+    /// <summary>
     /// Drives a <see cref="ClaudeCodeSession"/> and projects its NDJSON event stream into
     /// observable view models the chat UI binds to directly.
     /// </summary>
@@ -201,6 +227,19 @@ namespace TeronClaudeCodeVS.ViewModels
 
         public void RemovePendingFile(PendingFileAttachment attachment) =>
             PendingFiles.Remove(attachment);
+
+        /// <summary>Active File / Selection chips staged above the input box, sent with the next
+        /// message - see <see cref="PendingCodeReferenceAttachment"/> for why this replaced
+        /// inserting raw "@path#Lstart-Lend" text directly into the composer.</summary>
+        public ObservableCollection<PendingCodeReferenceAttachment> PendingCodeReferences { get; } = [];
+
+        public bool HasPendingCodeReferences => PendingCodeReferences.Count > 0;
+
+        public void AddPendingCodeReference(string relativePath, string fullPath, int? startLine, int? endLine) =>
+            PendingCodeReferences.Add(new PendingCodeReferenceAttachment(relativePath, fullPath, startLine, endLine));
+
+        public void RemovePendingCodeReference(PendingCodeReferenceAttachment attachment) =>
+            PendingCodeReferences.Remove(attachment);
 
         /// <summary>
         /// Currently-running tool calls (Task subagents, background Bash shells, or any other
@@ -632,6 +671,7 @@ namespace TeronClaudeCodeVS.ViewModels
 
             PendingImages.CollectionChanged += (s, e) => OnPropertyChanged(nameof(HasPendingImages));
             PendingFiles.CollectionChanged += (s, e) => OnPropertyChanged(nameof(HasPendingFiles));
+            PendingCodeReferences.CollectionChanged += (s, e) => OnPropertyChanged(nameof(HasPendingCodeReferences));
 
             PlanCommentRegistry.CommentSubmitted += OnPlanCommentSubmitted;
         }
@@ -810,7 +850,8 @@ namespace TeronClaudeCodeVS.ViewModels
             text = text.Trim();
             bool hasImages = PendingImages.Count > 0;
             bool hasFiles = PendingFiles.Count > 0;
-            if ((text.Length == 0 && !hasImages && !hasFiles) || ClaudeNotFoundMessage != null)
+            bool hasCodeRefs = PendingCodeReferences.Count > 0;
+            if ((text.Length == 0 && !hasImages && !hasFiles && !hasCodeRefs) || ClaudeNotFoundMessage != null)
                 return;
 
             if (_session == null || !_session.IsRunning)
@@ -821,6 +862,9 @@ namespace TeronClaudeCodeVS.ViewModels
                 userMessage.Blocks.Add(new ImageAttachmentViewModel(image.Thumbnail));
             foreach (PendingFileAttachment file in PendingFiles)
                 userMessage.Blocks.Add(new FileAttachmentViewModel(file.Title));
+            foreach (PendingCodeReferenceAttachment codeRef in PendingCodeReferences)
+                userMessage.Blocks.Add(new CodeReferenceAttachmentViewModel(
+                    codeRef.FullPath, codeRef.DisplayTitle, codeRef.StartLine, codeRef.EndLine));
             if (text.Length > 0)
                 userMessage.Blocks.Add(new TextBlockViewModel { Text = text });
             Messages.Add(userMessage);
@@ -833,7 +877,15 @@ namespace TeronClaudeCodeVS.ViewModels
                 OnPropertyChanged(nameof(CurrentSessionTitle));
             }
 
-            _lastSentText = text;
+            // The CLI only understands plain text - a code-reference chip is a UI affordance over
+            // the same "@path#Lstart-Lend" mention InsertContextReference used to type directly, so
+            // it's prepended to what's actually sent rather than shown in the visible bubble's own
+            // TextBlockViewModel, which stays exactly what the user typed.
+            string textToSend = hasCodeRefs
+                ? string.Join(" ", PendingCodeReferences.Select(c => c.ReferenceText)) + (text.Length > 0 ? " " + text : "")
+                : text;
+
+            _lastSentText = textToSend;
 
             List<string>? imagesBase64Png = hasImages ? [.. PendingImages.Select(p => p.Base64Png)] : null;
             List<PendingFileContent>? files = hasFiles
@@ -841,6 +893,7 @@ namespace TeronClaudeCodeVS.ViewModels
                 : null;
             PendingImages.Clear();
             PendingFiles.Clear();
+            PendingCodeReferences.Clear();
 
             // Deliberately no ResetTurnState() here: the CLI queues additional `user` lines
             // written while a turn is still in flight and runs them sequentially on its own
@@ -851,7 +904,7 @@ namespace TeronClaudeCodeVS.ViewModels
             IsBusy = true;
             StatusText = "Working…";
 
-            await _session!.SendUserMessageAsync(text, imagesBase64Png, files).ConfigureAwait(false);
+            await _session!.SendUserMessageAsync(textToSend, imagesBase64Png, files).ConfigureAwait(false);
         }
 
         private void StopSessionCore()

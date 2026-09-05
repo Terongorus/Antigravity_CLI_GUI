@@ -10,6 +10,7 @@ namespace TeronClaudeCodeVS.Controls
         public DataTemplate? TextTemplate { get; set; }
         public DataTemplate? ImageAttachmentTemplate { get; set; }
         public DataTemplate? FileAttachmentTemplate { get; set; }
+        public DataTemplate? CodeReferenceAttachmentTemplate { get; set; }
         public DataTemplate? ThinkingTemplate { get; set; }
         public DataTemplate? ToolCallTemplate { get; set; }
         public DataTemplate? PermissionTemplate { get; set; }
@@ -32,6 +33,7 @@ namespace TeronClaudeCodeVS.Controls
                 TextBlockViewModel => TextTemplate,
                 ImageAttachmentViewModel => ImageAttachmentTemplate,
                 FileAttachmentViewModel => FileAttachmentTemplate,
+                CodeReferenceAttachmentViewModel => CodeReferenceAttachmentTemplate,
                 ThinkingBlockViewModel => ThinkingTemplate,
                 ToolCallViewModel => ToolCallTemplate,
                 PermissionRequestViewModel => PermissionTemplate,

@@ -558,12 +558,36 @@
         </DataTemplate>
 
         <DataTemplate x:Key="FileAttachmentTemplate" DataType="{x:Type vm:FileAttachmentViewModel}">
-            <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,0,6" Padding="6,3" Background="#22FFFFFF">
+            <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,0,6" Padding="6,3" Background="{StaticResource CardBackgroundBrush}">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="📄" Margin="0,0,5,0"/>
                     <TextBlock Text="{Binding Title}" FontSize="{StaticResource FontSizeBody}"/>
                 </StackPanel>
             </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="CodeReferenceAttachmentTemplate" DataType="{x:Type vm:CodeReferenceAttachmentViewModel}">
+            <Button Command="{Binding OpenCommand}" Cursor="Hand"
+                    ToolTip="Open in the editor"
+                    AutomationProperties.Name="{Binding Title}">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,0,6" Padding="6,3"
+                                Background="{StaticResource CardBackgroundBrush}" x:Name="Bd">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&lt;/&gt;" FontFamily="Consolas" Margin="0,0,5,0"/>
+                                <TextBlock Text="{Binding Title}" FontSize="{StaticResource FontSizeBody}"
+                                           TextDecorations="Underline"/>
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource HoverBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
         </DataTemplate>
 
         <DataTemplate x:Key="ThinkingBlockTemplate" DataType="{x:Type vm:ThinkingBlockViewModel}">
@@ -1046,6 +1070,7 @@
             TextTemplate="{StaticResource TextBlockTemplate}"
             ImageAttachmentTemplate="{StaticResource ImageAttachmentTemplate}"
             FileAttachmentTemplate="{StaticResource FileAttachmentTemplate}"
+            CodeReferenceAttachmentTemplate="{StaticResource CodeReferenceAttachmentTemplate}"
             ThinkingTemplate="{StaticResource ThinkingBlockTemplate}"
             ToolCallTemplate="{StaticResource ToolCallTemplate}"
             PermissionTemplate="{StaticResource PermissionTemplate}"
@@ -1060,28 +1085,25 @@
         <!-- ===================== Message templates ===================== -->
 
         <!--
-            ST-5 - DELIBERATE DIVERGENCE FROM THE MEASURED BASELINE. DO NOT "FIX".
+            ST-5's original terracotta-filled bubble is SUPERSEDED - Kaloyan's own explicit request
+            2026-09-05, after comparing against GitHub Copilot Chat's own user-message styling,
+            reverses that standing decision. Copilot's own user messages are a neutral, understated
+            card (no brand-colour fill) - same CardBackgroundBrush + HairlineBrush neutral-card
+            language already used everywhere else in this UI (tool-call cards, attachment chips),
+            rather than a second hardcoded color needing its own light/dark justification.
 
-            The 2026-08-28 live audit found that the official VS Code extension renders user
-            messages with no bubble at all - plain text, left-aligned, distinguished only by
-            weight. Our right-aligned terracotta bubble was raised as a style gap (ST-5) and was
-            explicitly kept: the asymmetry makes turn boundaries readable at a glance when the
-            tool window is docked narrow, which is the common case in Visual Studio and not the
-            common case in VS Code's wider sidebar.
-
-            Because the fill is the accent, this is the one place the brand colour carries a large
-            surface area, and the 10,10,2,10 radius is the tail - both are intentionally literal
-            here rather than tokenised, so that a future pass over ChatTheme.xaml cannot change
-            them by accident.
+            The right-aligned, tailed SHAPE itself is kept - that solves a real, separate problem
+            (turn-boundary readability in a narrow docked panel, per the original ST-5 audit) that
+            has nothing to do with which color fills it, so there was no reason to also revert it.
         -->
         <DataTemplate x:Key="UserMessageTemplate" DataType="{x:Type vm:ChatMessageViewModel}">
             <!--
                 FEAT-1's per-message affordance. Baseline reveals a `…` on hover beside each user
                 message and offers the same three actions its picker does; this is that, kept
-                outside the bubble so the terracotta fill stays a clean shape. It is transparent
-                rather than collapsed when not hovered, exactly as baseline's is - which also means
-                it is a real element in the automation tree at all times, so a live test can reach
-                it without simulating a mouse.
+                outside the bubble so the card fill stays a clean shape. It is transparent rather
+                than collapsed when not hovered, exactly as baseline's is - which also means it is a
+                real element in the automation tree at all times, so a live test can reach it
+                without simulating a mouse.
             -->
             <Grid x:Name="UserRow" HorizontalAlignment="Right" Margin="48,4,4,4">
                 <Grid.ColumnDefinitions>
@@ -1098,8 +1120,9 @@
                         AutomationProperties.AutomationId="MessageActionsButton"
                         AutomationProperties.Name="Message actions"/>
 
-                <Border Grid.Column="1" Background="{StaticResource ClaudeAccentBrush}"
-                        TextElement.Foreground="White"
+                <Border Grid.Column="1" Background="{StaticResource CardBackgroundBrush}"
+                        BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1"
+                        TextElement.Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"
                         CornerRadius="10,10,2,10" Padding="10,6"
                         MaxWidth="460">
                     <ItemsControl ItemsSource="{Binding Blocks}" ItemTemplateSelector="{StaticResource BlockTemplateSelector}"/>
@@ -1946,6 +1969,35 @@
                                                    Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
                                         <Button Content="✕" Click="OnRemovePendingFileClicked" Tag="{Binding}"
                                                 AutomationProperties.Name="Remove file"
+                                                Style="{StaticResource IconButtonStyle}" Width="16" Height="16" FontSize="{StaticResource GlyphSizeSmall}"
+                                                Margin="5,0,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <ItemsControl ItemsSource="{Binding PendingCodeReferences}"
+                                  Visibility="{Binding HasPendingCodeReferences, Converter={StaticResource BoolToVisibilityConverter}}"
+                                  Margin="0,0,0,6">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <!-- Code-like glyph as the "thumbnail," matching how the official VS Code
+                                 extension distinguishes a code reference from an image/document attachment. -->
+                            <DataTemplate DataType="{x:Type vm:PendingCodeReferenceAttachment}">
+                                <Border CornerRadius="{StaticResource RadiusControl}" Margin="0,0,6,0" Padding="6,3"
+                                        BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&lt;/&gt;" FontFamily="Consolas" Margin="0,0,5,0"
+                                                   Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
+                                        <TextBlock Text="{Binding DisplayTitle}" FontSize="{StaticResource FontSizeChrome}"
+                                                   Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>
+                                        <Button Content="✕" Click="OnRemovePendingCodeReferenceClicked" Tag="{Binding}"
+                                                AutomationProperties.Name="Remove code reference"
                                                 Style="{StaticResource IconButtonStyle}" Width="16" Height="16" FontSize="{StaticResource GlyphSizeSmall}"
                                                 Margin="5,0,0,0"/>
                                     </StackPanel>

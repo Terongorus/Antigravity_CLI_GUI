@@ -303,7 +303,8 @@ namespace TeronClaudeCodeVS.Controls
             // A fenced/indented code block never reaches here - WalkBlocks intercepts and replaces
             // those before calling WalkBlock/FixupParagraph at all. This is prose, so file
             // references are worth linkifying.
-            LinkifyFileReferences(para);
+            LinkifyFileReferences(para);   // user-typed "@path#Lstart-Lend" mentions
+            LinkifyBareFilenames(para);    // Claude's own prose ("...in ClaudeCodePackage.cs...")
 
             // Inline `code` spans can come through as a bare Run with its own Background rather
             // than wrapped in a Span - normalize those directly (see FixupSpan for why).
@@ -350,7 +351,7 @@ namespace TeronClaudeCodeVS.Controls
                 };
                 // Fire-and-forget rather than an async lambda: OpenReferenceAsync already
                 // try/catches its entire body, so nothing here can throw unobserved.
-                link.Click += (_, __) => _ = OpenReferenceAsync(filePath!, null, null);
+                link.Click += (_, __) => _ = OpenFileReferenceAsync(filePath!, null, null);
                 header.Inlines.Add(link);
             }
             else
@@ -519,7 +520,7 @@ namespace TeronClaudeCodeVS.Controls
                 };
                 // Fire-and-forget rather than an async lambda: OpenReferenceAsync already
                 // try/catches its entire body, so nothing here can throw unobserved.
-                link.Click += (_, __) => _ = OpenReferenceAsync(path, start, end);
+                link.Click += (_, __) => _ = OpenFileReferenceAsync(path, start, end);
                 inlines.InsertAfter(anchor, anchor = link);
 
                 last = m.Index + m.Length;
@@ -531,7 +532,79 @@ namespace TeronClaudeCodeVS.Controls
             inlines.Remove(run);
         }
 
-        private static async System.Threading.Tasks.Task OpenReferenceAsync(string path, int? startLine, int? endLine)
+        // A plain word.ext shape, no "@" required and no path separators - just enough to find a
+        // candidate. Loose on purpose: real precision comes from checking the candidate against
+        // the actual project index below, not from the regex.
+        private static readonly Regex s_bareFileNamePattern = new(
+            @"\b(?<name>[A-Za-z0-9_\-]+\.[A-Za-z0-9]{1,10})\b",
+            RegexOptions.Compiled);
+
+        /// <summary>
+        /// UX. Auto-links a bare filename Claude's own prose mentions ("...in
+        /// ClaudeCodePackage.cs...") against the real, currently-indexed project files - not just
+        /// the user-typed "@path" mentions <see cref="LinkifyFileReferences"/> handles. Requested
+        /// live 2026-09-05 after a GitHub Copilot Chat comparison screenshot showed exactly this.
+        /// Deliberately conservative: a candidate word only becomes a link if its filename exactly
+        /// matches (case-insensitive) a real file already discovered by the composer's own
+        /// "@"-mention index (<see cref="Core.ClaudeCodePackage.IndexedProjectFiles"/>) - a version
+        /// number, "e.g.", or a filename Claude invented that isn't actually in this workspace is
+        /// left as plain text rather than risking a dead or wrong link. Runs strictly after
+        /// LinkifyFileReferences and re-queries Inlines fresh, so an already-linked "@path" mention
+        /// (now a Hyperlink, not a Run) can never be double-processed.
+        /// </summary>
+        private static void LinkifyBareFilenames(Paragraph para)
+        {
+            string[] indexedFiles = TeronClaudeCodeVS.Core.ClaudeCodePackage.Instance?.IndexedProjectFiles ?? [];
+            if (indexedFiles.Length == 0) return;
+
+            foreach (Run run in para.Inlines.OfType<Run>().ToList())
+            {
+                if (IsLightBackground(run.Background)) continue; // inline `code` span - never auto-link inside real code
+                LinkifyBareFilenameRun(para.Inlines, run, indexedFiles);
+            }
+        }
+
+        private static void LinkifyBareFilenameRun(InlineCollection inlines, Run run, string[] indexedFiles)
+        {
+            string text = run.Text;
+            MatchCollection matches = s_bareFileNamePattern.Matches(text);
+            if (matches.Count == 0) return;
+
+            Inline anchor = run;
+            int last = 0;
+            bool any = false;
+
+            foreach (Match m in matches)
+            {
+                string candidate = m.Groups["name"].Value;
+                string? fullPath = indexedFiles.FirstOrDefault(f =>
+                    string.Equals(Path.GetFileName(f), candidate, StringComparison.OrdinalIgnoreCase));
+                if (fullPath == null) continue;
+
+                if (m.Index > last)
+                    inlines.InsertAfter(anchor, anchor = new Run(text.Substring(last, m.Index - last)));
+
+                Hyperlink link = new(new Run(candidate)) { ToolTip = $"Open {fullPath}" };
+                link.Click += (_, __) => _ = OpenFileReferenceAsync(fullPath, null, null);
+                inlines.InsertAfter(anchor, anchor = link);
+
+                last = m.Index + m.Length;
+                any = true;
+            }
+
+            if (!any) return;
+
+            if (last < text.Length)
+                inlines.InsertAfter(anchor, new Run(text.Substring(last)));
+
+            inlines.Remove(run);
+        }
+
+        /// <summary>Resolves a possibly-relative file path against the current workspace root and
+        /// opens it in a real VS editor tab, optionally at a line range. Public so other UI (the
+        /// Active File/Selection attachment chip, not just an inline "@path" link) can reuse the
+        /// exact same open behavior.</summary>
+        public static async System.Threading.Tasks.Task OpenFileReferenceAsync(string path, int? startLine, int? endLine)
         {
             try
             {

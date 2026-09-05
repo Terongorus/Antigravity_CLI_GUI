@@ -26,6 +26,12 @@ namespace TeronClaudeCodeVS.Core
         /// <summary>Per-VS-instance singleton, used by the tool window to reach package services (e.g. the Options page).</summary>
         internal static ClaudeCodePackage? Instance { get; private set; }
 
+        /// <summary>Full paths of every file under the current workspace, mirrored here by
+        /// <see cref="ClaudeCodeChatControl.IndexProjectFilesAsync"/> so MarkdownRenderer - a static
+        /// class with no control instance to reach - can auto-link a bare filename Claude's own
+        /// prose mentions, the same index the composer's "@" picker already builds.</summary>
+        internal string[] IndexedProjectFiles { get; set; } = [];
+
         private IdeCompanionServer? _ideServer;
 
         protected override async Task InitializeAsync(CancellationToken cancellationToken, IProgress<ServiceProgressData> progress)

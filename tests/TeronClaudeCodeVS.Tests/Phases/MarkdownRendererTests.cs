@@ -141,6 +141,24 @@ namespace TeronClaudeCodeVS.Tests.Phases
         }
 
         [Fact]
+        public void A_bare_filename_mention_stays_plain_text_when_no_project_is_indexed()
+        {
+            // LinkifyBareFilenames reads Core.ClaudeCodePackage.Instance.IndexedProjectFiles, which
+            // is null/empty outside a real VS host - same reason this suite never instantiates
+            // ClaudeCodePackage at all (see ChatControl.cs). This only proves the degrade-gracefully
+            // path: no exception, and nothing gets linked without a real project index to check
+            // against. The actual matching behavior needs a live F5 pass, same as the VS
+            // classification colors elsewhere in this file.
+            Sta.Run(() =>
+            {
+                FlowDocument doc = MarkdownRenderer.Render("See ClaudeCodePackage.cs for details.");
+
+                Paragraph para = Assert.IsType<Paragraph>(doc.Blocks.FirstBlock);
+                Assert.Empty(para.Inlines.OfType<Hyperlink>());
+            });
+        }
+
+        [Fact]
         public void A_diff_block_still_gets_the_old_add_remove_line_coloring_not_tokenized()
         {
             Sta.Run(() =>

@@ -378,6 +378,12 @@ namespace TeronClaudeCodeVS.Core
             if (string.IsNullOrEmpty(_solutionDirectory)) return;
             string root = _solutionDirectory;
             _projectFiles = await Task.Run(() => EnumerateProjectFiles(root)).ConfigureAwait(false);
+
+            // Mirrored onto the package singleton so MarkdownRenderer - a static class with no
+            // control instance to reach - can auto-link a bare filename Claude's own prose mentions
+            // against the same real project index this composer's own "@" picker already uses.
+            if (ClaudeCodePackage.Instance != null)
+                ClaudeCodePackage.Instance.IndexedProjectFiles = _projectFiles;
         }
 
         private static string[] EnumerateProjectFiles(string root)
@@ -1397,6 +1403,12 @@ namespace TeronClaudeCodeVS.Core
                 _vm.RemovePendingFile(attachment);
         }
 
+        private void OnRemovePendingCodeReferenceClicked(object sender, RoutedEventArgs e)
+        {
+            if (((Button)sender).Tag is PendingCodeReferenceAttachment attachment)
+                _vm.RemovePendingCodeReference(attachment);
+        }
+
         // Extension allowlists ported verbatim from the real VS Code extension's own webview
         // bundle (its EK1/kX0 sets and file-type classifier), confirmed by reading the installed
         // bundle directly (2026-08-27) - not guessed. Local drops only give us a file path (no
@@ -1795,20 +1807,15 @@ namespace TeronClaudeCodeVS.Core
             InsertContextReference(path!, startLine, endLine);
         }
 
+        /// <summary>
+        /// Stages an Active File / Selection reference as a real attachment chip - see
+        /// <see cref="PendingCodeReferenceAttachment"/> for why this replaced inserting raw
+        /// "@path#Lstart-Lend" text directly into the composer.
+        /// </summary>
         private void InsertContextReference(string filePath, int? startLine, int? endLine)
         {
             string relative = GetRelativePath(_solutionDirectory, filePath);
-
-            string reference = startLine.HasValue
-                ? (startLine == endLine ? $"@{relative}#L{startLine}" : $"@{relative}#L{startLine}-L{endLine}")
-                : $"@{relative}";
-
-            int caret = InputBox.CaretIndex;
-            string current = InputBox.Text;
-            string insertion = reference + " ";
-
-            InputBox.Text = current.Substring(0, caret) + insertion + current.Substring(caret);
-            InputBox.CaretIndex = caret + insertion.Length;
+            _vm.AddPendingCodeReference(relative, filePath, startLine, endLine);
             Keyboard.Focus(InputBox);
         }
 

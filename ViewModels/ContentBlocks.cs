@@ -54,6 +54,21 @@ namespace TeronClaudeCodeVS.ViewModels
         public string Title { get; } = title;
     }
 
+    /// <summary>
+    /// An Active File / Selection reference attached to a sent user message - shown as a code-glyph
+    /// chip (matching the official VS Code extension's own attachment thumbnails) rather than the
+    /// raw "@path#Lstart-Lend" text this used to be typed as. Clicking it opens the real file, at
+    /// the referenced line range if there is one, the same as an inline "@path" mention already does.
+    /// </summary>
+    public sealed class CodeReferenceAttachmentViewModel(string fullPath, string title, int? startLine, int? endLine)
+        : ContentBlockViewModel
+    {
+        public string Title { get; } = title;
+
+        public ICommand OpenCommand { get; } = new RelayCommand(
+            () => _ = MarkdownRenderer.OpenFileReferenceAsync(fullPath, startLine, endLine));
+    }
+
     /// <summary>A streamed "thinking" block - collapsed by default, shown in a muted style.</summary>
     public sealed class ThinkingBlockViewModel : ContentBlockViewModel, IMarkdownContent
     {
