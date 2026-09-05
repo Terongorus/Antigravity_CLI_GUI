@@ -43,25 +43,29 @@ namespace TeronClaudeCodeVS.Controls
 
         private static readonly SolidColorBrush s_codeBorderBrush = Frozen(Color.FromArgb(0x40, 0x80, 0x80, 0x80));
 
-        // Fallback for a fenced code block's header+body fill when the real VS editor background
-        // isn't reachable (the xUnit tests' fake package-less environment - never a real run).
-        // Neutral, not accent-tinted, since it is never actually seen live.
-        private static readonly SolidColorBrush s_codeBlockBgFallback = Frozen(Color.FromArgb(0x20, 0x80, 0x80, 0x80));
+        // The fill for BOTH the header strip and the body of a fenced code block. Header and body
+        // deliberately share this exact brush; the header's own bottom border is the only seam
+        // between them, matching GitHub Copilot Chat's one-flat-surface-plus-a-divider look.
+        //
+        // Went through THREE revisions chasing this. First: a translucent accent tint copied from
+        // the inline s_codeBg - reads fine for a couple of words, reads as a washed-out, oddly
+        // colored box for a whole block (2026-09-05). Second: the real VS editor's own background
+        // via ClaudeCodePackage.GetEditorBackground() (IEditorFormatMapService's "Plain Text" ->
+        // "Background", the same source Fonts and Colors' own preview swatch reads from) - shape
+        // confirmed correct via reflection against the real SDK assembly, but called out live
+        // 2026-09-06 as STILL solid white on an otherwise dark theme. "Plain Text"'s configured
+        // background is apparently not a reliable proxy for what the user actually sees the editor
+        // painted with - a real, confirmed-live divergence between the documented API contract and
+        // its live behavior, not something to keep chasing with a third VS SDK lookup. Settled on
+        // the same self-adapting technique CardBackgroundBrush (ChatTheme.xaml) already uses
+        // everywhere else in this UI for a neutral card surface: a low-alpha grey that blends over
+        // whatever the real background is, so it is correct on any theme by construction instead
+        // of by asking VS what that theme's color happens to be. Slightly stronger alpha than
+        // CardBackgroundBrush's 0x14 (a code block should read as a distinct surface, not just
+        // another card).
+        private static readonly SolidColorBrush s_codeBlockBg = Frozen(Color.FromArgb(0x22, 0x80, 0x80, 0x80));
 
-        /// <summary>
-        /// The fill for BOTH the header strip and the body of a fenced code block - the real VS
-        /// code editor's own background (see <see cref="Core.ClaudeCodePackage.GetEditorBackground"/>),
-        /// not a hand-picked or accent-tinted color. Called out live 2026-09-05 as looking worse
-        /// than the plain highlight it replaced: a translucent accent tint that works fine for a
-        /// couple of inline words (s_codeBg) reads as a washed-out, oddly-colored box once it is the
-        /// fill for an entire multi-line block, especially layered under a second, stronger-alpha
-        /// tint for the header - two different colored bands where GitHub Copilot Chat's own
-        /// reference screenshots show one flat, real editor surface with only a thin divider line
-        /// under the header. Header and body deliberately share this exact same brush now; that
-        /// divider (BuildCodeHeader's own bottom border) is the only seam between them.
-        /// </summary>
-        private static Brush GetCodeBlockBackground() =>
-            Core.ClaudeCodePackage.Instance?.GetEditorBackground() ?? s_codeBlockBgFallback;
+        private static Brush GetCodeBlockBackground() => s_codeBlockBg;
         private static readonly FontFamily s_inlineCodeFont = new("Consolas");
 
         // Diff line colors (same hues as GitHub's diff view).
@@ -390,7 +394,11 @@ namespace TeronClaudeCodeVS.Controls
 
             TextBlock label = new()
             {
-                FontSize = 11,
+                // Bumped from 11 (FontSizeChrome) to 12 (FontSizeComposerChip) - called out live
+                // 2026-09-06 as too small next to the code itself. Literal, not a resource
+                // reference, for the same reason the brushes above are hand-rolled: this is a
+                // static, no-visual-tree renderer with no easy path to ChatTheme.xaml's tokens.
+                FontSize = 12,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0),
                 TextTrimming = TextTrimming.CharacterEllipsis,
@@ -479,6 +487,30 @@ namespace TeronClaudeCodeVS.Controls
             return item;
         }
 
+        /// <summary>
+        /// A flat, square icon tile with a rounded-corner hover fill, parsed from XAML the same way
+        /// this file already builds a FlowDocument from markup elsewhere - simpler than assembling
+        /// a ControlTemplate's visual tree by hand with FrameworkElementFactory. Replaces the
+        /// default WPF Button chrome, which was called out live 2026-09-06 as producing a
+        /// noticeably rectangular button (unequal horizontal/vertical padding around the icon) with
+        /// a crude hard-edged hover rectangle.
+        /// </summary>
+        private static readonly ControlTemplate s_flatIconButtonTemplate = (ControlTemplate)XamlReader.Parse(
+            """
+            <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                              TargetType="Button">
+                <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="4">
+                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter TargetName="Bg" Property="Background" Value="#40808080"/>
+                    </Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate>
+            """);
+
         private static Button BuildCopyButton(string code)
         {
             System.Windows.Shapes.Path icon = new() { Data = CopyIcon, Stretch = Stretch.Uniform, Width = 13, Height = 13 };
@@ -488,20 +520,18 @@ namespace TeronClaudeCodeVS.Controls
             Button button = new()
             {
                 Content = icon,
-                HorizontalContentAlignment = HorizontalAlignment.Center,
-                VerticalContentAlignment = VerticalAlignment.Center,
-                Padding = new Thickness(5, 2, 5, 2),
+                Width = 22,
+                Height = 22,
+                Padding = new Thickness(0),
                 Margin = new Thickness(0),
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
+                Template = s_flatIconButtonTemplate,
                 Cursor = System.Windows.Input.Cursors.Hand,
-                Opacity = 0.7,
                 ToolTip = "Copy this code block",
                 Focusable = false,
             };
 
-            button.MouseEnter += (_, __) => { button.Opacity = 1.0; button.Background = s_codeBorderBrush; };
-            button.MouseLeave += (_, __) => { button.Opacity = 0.7; button.Background = Brushes.Transparent; };
             button.Click += (_, __) => CopyToClipboard(button, icon, code);
 
             return button;

@@ -52,7 +52,6 @@ namespace TeronClaudeCodeVS.Core
 
         private IClassificationTypeRegistryService? _classificationTypeRegistry;
         private IClassificationFormatMapService? _classificationFormatMapService;
-        private IEditorFormatMapService? _editorFormatMapService;
 
         /// <summary>
         /// The real Visual Studio editor's own color for a token kind (keyword/string/comment/...),
@@ -91,51 +90,11 @@ namespace TeronClaudeCodeVS.Core
             }
         }
 
-        /// <summary>
-        /// The real Visual Studio code editor's own default background - what a fenced code
-        /// block's header+body chrome is painted with, instead of a hand-picked or accent-tinted
-        /// color, so it reads as an actual editor surface (dark stays dark, light stays light) on
-        /// any theme, matching GitHub Copilot Chat's own code blocks.
-        /// <para>
-        /// Deliberately NOT <c>IClassificationFormatMap.DefaultTextProperties</c> (what the first
-        /// version of this method used, and <see cref="GetClassificationForeground"/> still uses
-        /// for per-token FOREGROUND colors) - found live 2026-09-06 rendering solid white
-        /// regardless of the active VS theme. That API models per-TOKEN highlight overlays for
-        /// syntax coloring; "Plain Text"'s own background there is commonly left at its literal
-        /// default (white) in Fonts and Colors, since the editor's actual visible surface is
-        /// painted separately by the view itself, not by that classification's background. The
-        /// editor's real, currently-themed surface color is
-        /// <see cref="IEditorFormatMapService"/>'s "Plain Text" -> "Background" entry instead -
-        /// the same source Fonts and Colors' own "Plain Text" preview swatch reads from.
-        /// </para>
-        /// </summary>
-        internal Brush? GetEditorBackground()
-        {
-            try
-            {
-                if (_editorFormatMapService == null)
-                {
-                    if (GetService(typeof(SComponentModel)) is not IComponentModel componentModel)
-                        return null;
-
-                    _editorFormatMapService = componentModel.GetService<IEditorFormatMapService>();
-                }
-
-                var formatMap = _editorFormatMapService.GetEditorFormatMap("text");
-                var properties = formatMap.GetProperties("Plain Text");
-                object? background = properties["Background"];
-                return background switch
-                {
-                    Brush brush => brush,
-                    Color color => new SolidColorBrush(color),
-                    _ => null,
-                };
-            }
-            catch
-            {
-                return null;
-            }
-        }
+        // GetEditorBackground() (an IEditorFormatMapService "Plain Text" -> "Background" lookup)
+        // lived here briefly, meant to paint a fenced code block's chrome with the real editor
+        // surface color. Removed 2026-09-06: confirmed live to render solid white on an otherwise
+        // dark theme, the same failure it was written to fix in the classification-based API it
+        // replaced. See MarkdownRenderer.s_codeBlockBg for what replaced it and why.
 
         /// <summary>
         /// Lazily starts (or stops, if the setting was just turned off) the shared IDE companion
