@@ -355,22 +355,47 @@ namespace TeronClaudeCodeVS.Controls
         /// <summary>
         /// Builds the strip above a code block's body: the language name, or - when this block is
         /// about one specific file (an Edit's diff, a Write's new content) - that file's name as a
-        /// clickable link that opens it in the real editor, plus the editor-actions dropdown and
-        /// copy button on the right. Modeled on GitHub Copilot Chat's own code-block header rather
-        /// than the plain floating corner button this replaced (see docs/Phase 24).
+        /// clickable link that opens it in the real editor, plus a copy button and (for real,
+        /// insertable file content only - see <see cref="ShouldShowInsertActions"/>) the
+        /// editor-actions dropdown on the right.
+        /// <para>
+        /// A native <see cref="DockPanel"/> inside a <see cref="BlockUIContainer"/>, not a
+        /// Paragraph built from Inlines/Floaters (Phase 24's original design here, and the "Insert
+        /// at Cursor" dropdown's own first cut) - live testing 2026-09-06 found the taller dropdown
+        /// button rendering outside the header strip entirely. FlowDocument's Floater does
+        /// CSS-float-style layout with no guaranteed vertical containment inside the paragraph that
+        /// hosts it; a real WPF panel lays out deterministically instead of relying on that.
+        /// </para>
         /// </summary>
-        private static Paragraph BuildCodeHeader(string? language, string? filePath, string code)
+        private static Block BuildCodeHeader(string? language, string? filePath, string code)
         {
-            Paragraph header = new()
+            bool showInsertActions = ShouldShowInsertActions(language, filePath);
+
+            Border headerBorder = new()
             {
-                Margin = new Thickness(0),
-                Padding = new Thickness(10, 5, 6, 5),
                 Background = GetCodeBlockBackground(),
                 BorderBrush = s_codeBorderBrush,
                 BorderThickness = new Thickness(0, 0, 0, 1),
-                FontSize = 11,
+                Padding = new Thickness(10, 5, 6, 5),
             };
-            header.SetResourceReference(TextElement.ForegroundProperty,
+
+            DockPanel dock = new();
+
+            StackPanel actions = new() { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            if (showInsertActions)
+                actions.Children.Add(BuildInsertActionsButton(code));
+            actions.Children.Add(BuildCopyButton(code));
+            DockPanel.SetDock(actions, Dock.Right);
+            dock.Children.Add(actions);
+
+            TextBlock label = new()
+            {
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            label.SetResourceReference(TextBlock.ForegroundProperty,
                 Microsoft.VisualStudio.Shell.VsBrushes.ToolWindowTextKey);
 
             if (!string.IsNullOrEmpty(filePath))
@@ -382,28 +407,39 @@ namespace TeronClaudeCodeVS.Controls
                 // Fire-and-forget rather than an async lambda: OpenReferenceAsync already
                 // try/catches its entire body, so nothing here can throw unobserved.
                 link.Click += (_, __) => _ = OpenFileReferenceAsync(filePath!, null, null);
-                header.Inlines.Add(link);
+                label.Inlines.Add(link);
             }
             else
             {
-                header.Inlines.Add(new Run(string.IsNullOrEmpty(language) ? "text" : language!));
+                label.Text = string.IsNullOrEmpty(language) ? "text" : language!;
             }
 
-            header.Inlines.Add(BuildHeaderActionsFloater(code));
-            return header;
+            dock.Children.Add(label);
+            headerBorder.Child = dock;
+
+            return new BlockUIContainer(headerBorder) { Margin = new Thickness(0) };
         }
 
         /// <summary>
-        /// The header's right-hand side: GitHub Copilot Chat's "Insert at Cursor" dropdown (Insert
-        /// at Cursor / Insert in New File / Apply in Active Document - see
-        /// <see cref="Core.VsIdeToolHandlers"/> for what each one actually does) plus the existing
-        /// copy button, both in ONE Floater. Deliberately one floater with an internal
-        /// StackPanel rather than two separate right-aligned Floaters: FlowDocument's own stacking
-        /// order for multiple same-side floaters isn't something this static, no-visual-tree
-        /// renderer can verify without a live layout pass, so a plain StackPanel is used to
-        /// guarantee the left-to-right order instead of trusting it.
+        /// GitHub Copilot Chat's own "Insert at Cursor" dropdown only ever appears on a real
+        /// generated-code proposal, never on a command's output or a plain diff. Flagged live
+        /// 2026-09-06 on a tool call's "**Output:**" wrap (a plain-text success/failure message,
+        /// nothing to insert) - traced to <see cref="ViewModels.ContentBlocks.ToolCallViewModel"/>
+        /// passing the tool's file path to a block that was never that file's own content (fixed
+        /// there too). Restated here as a second, independent guard: a block only qualifies when it
+        /// is tied to a specific file (Write's whole content, an Edit's own code) AND is not a
+        /// "```diff" fence - a unified diff's +/- lines are not valid file content to insert either.
         /// </summary>
-        private static Floater BuildHeaderActionsFloater(string code)
+        private static bool ShouldShowInsertActions(string? language, string? filePath) =>
+            !string.IsNullOrEmpty(filePath) &&
+            !string.Equals(language, "diff", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The "Insert at Cursor ▾" dropdown: Insert at Cursor / Insert in New File / Apply in
+        /// Active Document - see <see cref="Core.VsIdeToolHandlers"/> for what each one actually
+        /// does.
+        /// </summary>
+        private static Button BuildInsertActionsButton(string code)
         {
             Button insertButton = new()
             {
@@ -433,24 +469,7 @@ namespace TeronClaudeCodeVS.Controls
                 () => _ = Core.VsIdeToolHandlers.ApplyInActiveDocumentAsync(code)));
             insertButton.Click += (_, __) => menu.IsOpen = true;
 
-            Button copyButton = BuildCopyButton(code);
-
-            StackPanel actions = new() { Orientation = Orientation.Horizontal };
-            actions.Children.Add(insertButton);
-            actions.Children.Add(copyButton);
-
-            return new Floater(new BlockUIContainer(actions)
-            {
-                Margin = new Thickness(0),
-                Padding = new Thickness(0),
-            })
-            {
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Width = 150,
-                Margin = new Thickness(0),
-                Padding = new Thickness(0),
-                BorderThickness = new Thickness(0),
-            };
+            return insertButton;
         }
 
         private static MenuItem BuildHeaderActionMenuItem(string text, Action action)

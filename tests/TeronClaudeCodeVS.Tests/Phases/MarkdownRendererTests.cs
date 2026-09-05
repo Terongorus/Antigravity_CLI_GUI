@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
 using TeronClaudeCodeVS.Controls;
@@ -89,6 +90,22 @@ namespace TeronClaudeCodeVS.Tests.Phases
             });
         }
 
+        /// <summary>
+        /// The header moved from a Paragraph built out of Inlines/Floaters to a native
+        /// DockPanel-in-a-BlockUIContainer (see MarkdownRenderer.BuildCodeHeader's own doc comment
+        /// - a Floater tall enough to hold the "Insert at Cursor" dropdown rendered outside the
+        /// header strip entirely, found live 2026-09-06). This walks that same real structure
+        /// instead of TextRange/Inlines, which only ever see FlowDocument text content, not what is
+        /// inside an embedded UIElement.
+        /// </summary>
+        private static TextBlock GetHeaderLabel(Section section)
+        {
+            BlockUIContainer headerContainer = Assert.IsType<BlockUIContainer>(section.Blocks.FirstBlock);
+            Border headerBorder = Assert.IsType<Border>(headerContainer.Child);
+            DockPanel dock = Assert.IsType<DockPanel>(headerBorder.Child);
+            return dock.Children.OfType<TextBlock>().Single();
+        }
+
         [Fact]
         public void A_code_block_header_shows_the_language_when_there_is_no_file()
         {
@@ -97,11 +114,10 @@ namespace TeronClaudeCodeVS.Tests.Phases
                 FlowDocument doc = MarkdownRenderer.Render("```bash\necho hi\n```");
 
                 Section section = Assert.Single(FindCodeSections(doc));
-                Paragraph header = Assert.IsType<Paragraph>(section.Blocks.FirstBlock);
-                string headerText = new TextRange(header.ContentStart, header.ContentEnd).Text;
+                TextBlock label = GetHeaderLabel(section);
 
-                Assert.Contains("bash", headerText);
-                Assert.DoesNotContain(header.Inlines.OfType<Hyperlink>(), _ => true);
+                Assert.Equal("bash", label.Text);
+                Assert.Empty(label.Inlines.OfType<Hyperlink>());
             });
         }
 
@@ -115,12 +131,45 @@ namespace TeronClaudeCodeVS.Tests.Phases
                     primaryFilePath: @"D:\Repo\Foo.cs");
 
                 Section section = Assert.Single(FindCodeSections(doc));
-                Paragraph header = Assert.IsType<Paragraph>(section.Blocks.FirstBlock);
+                TextBlock label = GetHeaderLabel(section);
 
-                Hyperlink link = Assert.Single(header.Inlines.OfType<Hyperlink>());
+                Hyperlink link = Assert.Single(label.Inlines.OfType<Hyperlink>());
                 string linkText = new TextRange(link.ContentStart, link.ContentEnd).Text;
                 Assert.Equal("Foo.cs", linkText);
             });
+        }
+
+        [Fact]
+        public void The_insert_actions_dropdown_only_appears_for_real_file_content_not_a_diff()
+        {
+            // Real bug found live 2026-09-06: a tool call's plain "Output:" text wrap inherited the
+            // edited file's path (see ContentBlocks.ToolCallViewModel.DetailDocument's own fix) and
+            // so showed an "Insert at Cursor" dropdown on a message with nothing to insert. Even
+            // with a real file path, a "```diff" fence's +/- lines aren't valid file content to
+            // insert either - both must be denied the dropdown, and a genuine primary file's own
+            // code fence must still get it.
+            Sta.Run(() =>
+            {
+                FlowDocument diffDoc = MarkdownRenderer.Render(
+                    "```diff\n+added\n```", primaryFilePath: @"D:\Repo\Foo.cs");
+                Assert.False(HasInsertActionsButton(Assert.Single(FindCodeSections(diffDoc))));
+
+                FlowDocument outputDoc = MarkdownRenderer.Render("```\nsome output\n```");
+                Assert.False(HasInsertActionsButton(Assert.Single(FindCodeSections(outputDoc))));
+
+                FlowDocument codeDoc = MarkdownRenderer.Render(
+                    "```csharp\nclass Foo {}\n```", primaryFilePath: @"D:\Repo\Foo.cs");
+                Assert.True(HasInsertActionsButton(Assert.Single(FindCodeSections(codeDoc))));
+            });
+
+            static bool HasInsertActionsButton(Section section)
+            {
+                BlockUIContainer headerContainer = Assert.IsType<BlockUIContainer>(section.Blocks.FirstBlock);
+                Border headerBorder = Assert.IsType<Border>(headerContainer.Child);
+                DockPanel dock = Assert.IsType<DockPanel>(headerBorder.Child);
+                StackPanel actions = Assert.Single(dock.Children.OfType<StackPanel>());
+                return actions.Children.OfType<Button>().Any(b => b.Content is string s && s == "Insert at Cursor ▾");
+            }
         }
 
         [Fact]

@@ -259,8 +259,17 @@ namespace TeronClaudeCodeVS.ViewModels
 
         public bool HasMarkdownDetail => DetailMarkdown != null;
 
+        /// <summary>
+        /// Real bug found live 2026-09-06: this used to pass the tool's file path unconditionally,
+        /// so an Edit call's plain "**Output:**" wrap (RawDiff != null - see DetailMarkdown above,
+        /// the diff itself is already shown by DiffViewer, not here) inherited the file's name as
+        /// its header AND the "Insert at Cursor" dropdown, on what is just a success/failure
+        /// message with nothing to insert. The file path only belongs on a block that IS that
+        /// file's actual content (Write's full-file DetailMarkdown) - never on the output/error
+        /// wrap that rides alongside a diff already shown elsewhere.
+        /// </summary>
         public FlowDocument? DetailDocument => DetailMarkdown is string md
-            ? MarkdownRenderer.Render(md, ToolPresentation.GetFullPath(ToolName, _input))
+            ? MarkdownRenderer.Render(md, RawDiff != null ? null : ToolPresentation.GetFullPath(ToolName, _input))
             : null;
 
         public FlowDocument Document => DetailDocument ?? new FlowDocument();
