@@ -3,6 +3,50 @@
 All notable changes to the **Claude Code for Visual Studio** extension will be documented in
 this file.
 
+## [0.7.0] - 2026-09-06
+
+First stable release since the 0.6.x beta series - a large batch of fixes and a few new
+capabilities from an extended round of live day-to-day use.
+
+* **Fixed: editing a file with real Windows (CRLF) line endings** could fail with "the text it
+  replaces isn't in the file as it currently stands" on any edit spanning more than one line -
+  the CLI's own `old_string`/`new_string` are always plain LF, even against a CRLF file on disk.
+* **Reworked permission prompts across every choice-style card** (file-edit approval, terminal
+  hand-off, `/feedback`, remote-control toggle): 1/2/3 keyboard shortcuts now actually resolve,
+  numbered options consistently show "1." with a period, and "Tell Claude what to do instead" is
+  now an always-visible textbox with placeholder text instead of a button you had to click first
+  to reveal it.
+* **Fixed the diff tab stealing keyboard focus for real.** Opening a diff tab is a real Visual
+  Studio document window, so it was stealing VS's own pane activation, not just focus inside the
+  tool window - a prior fix addressed the wrong layer and needed re-fixing. This also applies to
+  the manual "Open diff tab" button.
+* **Fixed the code-block background still showing light/washed-out** under an otherwise-correct
+  dark header, plus a squared-off, properly-sized copy button and a larger code-block header
+  title.
+* **`Allow PowerShell?` and other PowerShell tool-call permission prompts now show the actual
+  command and its description**, instead of dumping the raw tool-call JSON as both the summary
+  and the code block.
+* **Fixed message queuing**: a message sent while Claude is still working now stays pinned where
+  it was sent instead of visually drifting toward the bottom of the transcript as the response
+  keeps streaming, and a rare case where a queued message's real response could get misdirected to
+  the wrong place in the transcript (reading as "no response at all") is fixed.
+* **Fixed the per-message "…" rewind/fork button getting clipped off** when the docked tool window
+  is narrowed, and fixed narrowing/resizing the docked tool window from forcing the transcript to
+  snap to the bottom.
+* **Sent-message image thumbnails are now a compact chip** (matching the composer's own staging
+  chip) instead of rendering up to 260x200 inline, and the full-size image preview window now
+  scales an oversized screenshot down to fit instead of showing scrollbars - it also supports
+  Ctrl+Wheel to zoom in and Shift+Wheel to scroll horizontally once zoomed in, and clicking a
+  staged (not-yet-sent) image thumbnail now opens the same preview.
+* **Fixed system-notice text** (e.g. a diff-tab failure reason) getting cut off mid-sentence
+  instead of wrapping.
+* **Added:** real SVG icons throughout the UI (mic/send/stop/tools/add/session history/settings/
+  new session/copy/done/warning, plus the Claude logo mark), replacing emoji/glyph placeholders.
+* **Added:** real syntax highlighting and a code-editor-style header for code blocks, active
+  file/selection context is now a real attachment chip (not raw `@`-syntax inserted into the
+  composer), and a bare filename Claude mentions in prose now auto-links to the real file when one
+  exists in the workspace.
+
 ## [0.6.4] - 2026-09-05
 
 * **Fixed: a tool-call card showing a command followed by its output** (e.g. "Run command")

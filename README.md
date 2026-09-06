@@ -12,19 +12,33 @@ installing/logging in once via `claude` makes it available here too.
 
 ## Features
 
-- **Streaming chat** with full Markdown rendering (code blocks, tables, lists, inline code that
-  respects your IDE theme, etc.)
-- **Tool call visualization** — expandable cards for `Read`, `Edit`, `Write`, `Bash`, `Grep`,
-  `Glob`, `WebFetch`, `Task`, `TodoWrite`, MCP tools, and more, each with an icon, a one-line
-  summary, and full input/output/diff detail on demand
-- **Inline permission prompts** — Allow/Deny `can_use_tool` requests right in the chat, with a
-  real line-level diff preview for file edits
+- **Streaming chat** with full Markdown rendering — code blocks get real syntax highlighting and
+  a code-editor-style header, inline `code`/fences respect your IDE theme
+- **Tool call visualization** — expandable cards for `Read`, `Edit`, `Write`, `Bash`, `PowerShell`,
+  `Grep`, `Glob`, `WebFetch`, `Task`, `TodoWrite`, MCP tools, and more, each with an icon, a
+  one-line summary, and full input/output/diff detail on demand
+- **Transcript view modes** — Summary, Normal, Thinking, and Verbose, controlling how much
+  thinking/tool-call detail is shown by default
+- **Live status line** while a turn is running — elapsed time, token usage, running-task count,
+  and current status (waiting on Claude, running a tool, etc.)
+- **Inline permission prompts** — Allow/Deny `can_use_tool` requests right in the chat, with
+  1/2/3 keyboard shortcuts, a real line-level diff preview for file edits (opened automatically in
+  a native VS diff tab), and a redirect textbox to tell Claude what to do instead
 - **Answerable questions** — the `AskUserQuestion` tool renders as real radio buttons or
   checkboxes (single- and multi-select) instead of a dead-end approval card
 - **IDE companion server** — gives the CLI live diagnostics from Visual Studio's own Error List,
   awareness of your open editors/active file/selection, and a real inline diff review flow: a
   proposed edit opens in a native VS diff window with Accept/Reject, instead of only ever
   rendering inside the chat
+- **Rewind and fork** — jump back to any earlier point in the conversation, or fork a new branch
+  from it, via the per-message "…" menu
+- **MCP servers and plugins panels** — see connected MCP servers and installed plugins and their
+  status right in the tool window
+- **Voice dictation** and **remote control / cloud session hand-off**
+- **Attachments** — paste or drag in screenshots (click any thumbnail, staged or sent, for a
+  full-size preview with Ctrl+Wheel zoom and Shift+Wheel horizontal scroll), drop in text/code/PDF
+  files, or attach the active file/selection as a real reference chip; a bare filename Claude
+  mentions in its own prose auto-links to the real file when one exists in your workspace
 - **Consolidated `/` command menu** (matching the VS Code extension) for switching the model,
   permission mode, and thinking budget, viewing live session usage (turns/cost/tokens, plus
   real account/subscription info and 5-hour/weekly rate-limit bars), and running slash commands —
@@ -34,11 +48,11 @@ installing/logging in once via `claude` makes it available here too.
   Bypass Permissions
 - **Thinking/effort control** — Standard, Low, Medium, High, Max, Extra High, applied via
   `--effort`
-- **File & selection context** — "Add Active File" / "Add Selection" insert `@path[#Lstart-Lend]`
-  references relative to your solution
+- **Context window usage indicator**, shown once you're getting close to the effective window
+- **Generated session titles**, and a session-history list to switch between past conversations
 - **Slash command autocomplete**, sourced live from the running session
 - **Message queuing** — you can keep typing while Claude is still working; each message queues
-  and runs in order, exactly like the official extension
+  and runs in order, staying pinned where it was sent as the response keeps streaming
 - **`/compact` support** — shows a "Compacting…" status and a "Compacted chat · N tokens freed"
   result, instead of a silent no-op
 - **Retry on failure** — if a turn fails or the CLI process exits unexpectedly (including hitting
@@ -77,8 +91,9 @@ If the CLI can't be found automatically, set an explicit path under
 ## Known limitations
 
 - Plan Mode still shows the plan inline in chat rather than as a dedicated reviewable document.
-- No UI yet for checkpoints/rewind, in-app MCP server management, worktrees, remote control/cloud
-  sessions, the plugin marketplace, or voice input — all CLI features not yet surfaced natively.
+- No UI yet for worktrees — not yet surfaced natively.
+- Installing a new plugin or adding a marketplace still hands off to the terminal (`claude plugin
+  install`/`claude plugin marketplace add`); the Plugins/Marketplaces panel is otherwise native.
 
 ## Building from source
 
