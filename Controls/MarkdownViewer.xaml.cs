@@ -1,10 +1,11 @@
-using ClaudeCodeGUI.ViewModels;
+using TeronClaudeCodeVS.ViewModels;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Input;
 
-namespace ClaudeCodeGUI.Controls
+namespace TeronClaudeCodeVS.Controls
 {
     /// <summary>Renders an <see cref="IMarkdownContent"/> view model's markdown, refreshing as it streams in.</summary>
     public partial class MarkdownViewer : UserControl
@@ -27,7 +28,7 @@ namespace ClaudeCodeGUI.Controls
         {
             if (e.Delta == 0) return;
             e.Handled = true;
-            var args = new System.Windows.Input.MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta)
+            MouseWheelEventArgs args = new(e.MouseDevice, e.Timestamp, e.Delta)
             {
                 RoutedEvent = System.Windows.UIElement.MouseWheelEvent
             };

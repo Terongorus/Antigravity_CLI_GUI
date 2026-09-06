@@ -47,6 +47,15 @@
         </Strings>
       </Button>
 
+      <!-- Tools menu -> Check for Updates (RESUPPLY) -->
+      <Button guid="guidClaudeCodeCmdSet" id="cmdidClaudeCodeCheckForUpdates"
+              priority="0x0201" type="Button">
+        <Parent guid="guidClaudeCodeCmdSet" id="ClaudeCodeToolsGroup"/>
+        <Strings>
+          <ButtonText>Claude Code: Check for Updates</ButtonText>
+        </Strings>
+      </Button>
+
       <!-- Solution Explorer context menu -->
       <Button guid="guidClaudeCodeCmdSet" id="cmdidClaudeCodeSolutionExplorer"
               priority="0x0300" type="Button">
@@ -68,6 +77,31 @@
     </Buttons>
   </Commands>
 
+  <KeyBindings>
+    <!--
+        UX-6: baseline advertises `ctrl esc to focus or unfocus Claude` in its input placeholder.
+        Ctrl+Esc is unusable here - Windows itself claims it for the Start menu.
+
+        Ctrl+Alt+Y was chosen by querying the live VS 18 command table (all 639 chords in use) and
+        confirming it has no binding in any scope and is not the prefix of a chord. That check
+        matters: Visual Studio SILENTLY DROPS a VSIX default binding that collides with an existing
+        one, with no build or load error. The first attempt here used Ctrl+Alt+C, which VS already
+        gives to Debug.CallStack, and it simply never registered - the only symptom was
+        Commands.Item(...).Bindings coming back empty at runtime.
+
+        Two things must both be true for a change in this file to take effect at all:
+          * ProvideMenuResource"s version in ClaudeCodePackage.cs must be bumped (VS caches the
+            merged command table against it), and
+          * devenv /updateconfiguration must be run for the target hive.
+
+        The placeholder does not hard-code the chord: it asks VS at runtime what this command is
+        actually bound to, so the hint stays correct if the user rebinds it - see
+        ClaudeCodeChatControl.ApplyFocusShortcutHint.
+    -->
+    <KeyBinding guid="guidClaudeCodeCmdSet" id="cmdidClaudeCodeWindow"
+                editor="guidVSStd97" key1="Y" mod1="Control Alt"/>
+  </KeyBindings>
+
   <Symbols>
 
     <!-- Package GUID -->
@@ -85,6 +119,7 @@
       <IDSymbol name="cmdidClaudeCodeToolbar" value="0x0100"/>
       <IDSymbol name="cmdidClaudeCodeToolsMenu" value="0x0101"/>
       <IDSymbol name="cmdidClaudeCodeSolutionExplorer" value="0x0102"/>
+      <IDSymbol name="cmdidClaudeCodeCheckForUpdates" value="0x0103"/>
       <IDSymbol name="cmdidClaudeCodeWindow" value="0x0200"/>
     </GuidSymbol>
 

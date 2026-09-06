@@ -1,0 +1,98 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net481</TargetFramework>
+    <RootNamespace>TeronClaudeCodeVS</RootNamespace>
+    <AssemblyName>TeronClaudeCodeVS</AssemblyName>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <VSSDKBuildToolsAutoSetup>true</VSSDKBuildToolsAutoSetup>
+    <VSIXProject>true</VSIXProject>
+    <IncludeAssemblyInVSIXContainer>true</IncludeAssemblyInVSIXContainer>
+    <GeneratePkgDefFile>true</GeneratePkgDefFile>
+    <CopyBuildOutputToOutputDirectory>true</CopyBuildOutputToOutputDirectory>
+    <CopyOutputSymbolsToOutputDirectory>false</CopyOutputSymbolsToOutputDirectory>
+    <VSSDKTargetPlatformRegRootSuffix>Exp</VSSDKTargetPlatformRegRootSuffix>
+    <UseCodeBase>true</UseCodeBase>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+  
+  <!--
+    tests/ is its own project (Phase K). This project has no explicit Compile items, so the SDK's
+    default **/*.cs glob would otherwise pull the test sources into the VSIX itself - which fails
+    to compile for want of xunit, and would ship test code inside the extension if it did not.
+  -->
+  <ItemGroup>
+    <Compile Remove="tests\**" />
+    <Page Remove="tests\**" />
+    <None Remove="tests\**" />
+    <EmbeddedResource Remove="tests\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="CHANGELOG.md" />
+    <None Remove="LICENSE.txt" />
+    <None Remove="README.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Community.VisualStudio.Toolkit.17" Version="17.0.551" />
+    <PackageReference Include="Community.VisualStudio.Toolkit.Analyzers" Version="1.0.551" PrivateAssets="all" />
+    <PackageReference Include="Markdig.Wpf.Signed" Version="0.5.0.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="Microsoft.VisualStudio.SDK" Version="17.14.40265" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="18.5.40034" />
+  </ItemGroup>
+
+
+
+  <ItemGroup>
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="System.Design" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
+    <!-- UX-10: XDocument, used to read the version out of extension.vsixmanifest. -->
+    <Reference Include="System.Xml.Linq" />
+    <!--
+      FEAT-8: SAPI dictation. A .NET Framework assembly, so recognition is local and offline and
+      there is nothing to ship alongside it - see Core/VoiceInput.cs for why that tradeoff was made.
+    -->
+    <Reference Include="System.Speech" />
+  </ItemGroup>
+
+
+
+  <!--
+    Referenced by source.extension.vsixmanifest's <License>/<GettingStartedGuide>/<ReleaseNotes>/
+    <Icon> elements. Those need the files physically present in the .vsix archive next to the
+    manifest - Content + IncludeInVSIX does that. A plain WPF <Resource> item (the original form
+    here) embeds a file into the assembly as a BAML-style resource stream instead, which the VSIX
+    packager never sees, and fails the build with VSSDK1310 ("specified in the vsix but is missing
+    from the file list").
+  -->
+  <ItemGroup>
+    <Content Include="CHANGELOG.md">
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="LICENSE.txt">
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="README.md">
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\logo_icon.png">
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <VSCTCompile Include="Menus.vsct">
+      <ResourceName>Menus.ctmenu</ResourceName>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </VSCTCompile>
+  </ItemGroup>
+
+</Project>

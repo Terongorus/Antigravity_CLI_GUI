@@ -1,14 +1,16 @@
-using ClaudeCodeGUI.Controls;
-using ClaudeCodeGUI.Protocol;
+﻿using TeronClaudeCodeVS.Controls;
+using TeronClaudeCodeVS.Protocol;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Documents;
 using System.Windows.Input;
+using System.Windows.Media;
 
-namespace ClaudeCodeGUI.ViewModels
+namespace TeronClaudeCodeVS.ViewModels
 {
     /// <summary>Base type for the pieces that make up a chat message (text, thinking, tool calls, ...).</summary>
     public abstract class ContentBlockViewModel : ObservableObject
@@ -38,6 +40,86 @@ namespace ClaudeCodeGUI.ViewModels
         public FlowDocument Document => MarkdownRenderer.Render(_text);
 
         public void Append(string delta) => Text += delta;
+    }
+
+    /// <summary>A pasted screenshot attached to a sent user message - shown as a thumbnail with its
+    /// name and pixel dimensions, matching the composer's own staging chip (PendingImageAttachment).
+    /// Clicking it opens a full-size preview, matching the official VS Code extension's own
+    /// click-to-preview behavior for a sent image attachment.</summary>
+    public sealed class ImageAttachmentViewModel(ImageSource thumbnail, string name) : ContentBlockViewModel
+    {
+        public ImageSource Thumbnail { get; } = thumbnail;
+
+        public string Name { get; } = name;
+
+        public string DimensionsText { get; } =
+            thumbnail is System.Windows.Media.Imaging.BitmapSource bmp ? $"{bmp.PixelWidth}×{bmp.PixelHeight}" : "";
+
+        public ICommand OpenCommand { get; } = new RelayCommand(() =>
+        {
+            // The full-resolution decode, not a scaled-down display copy - see PendingImageAttachment's
+            // own doc comment on Thumbnail. No VS document/file is involved: a pasted screenshot never
+            // had one, so a lightweight in-app viewer is the only thing that works for both origins.
+            Controls.ImagePreviewWindow preview = new(thumbnail);
+            preview.Show();
+        });
+    }
+
+    /// <summary>A dropped text/code/PDF file attached to a sent user message - shown as a filename
+    /// chip. Clicking it opens the content: a text/code file opens in a real VS editor tab, a PDF
+    /// launches the OS's own default viewer (VS has no built-in PDF renderer to open one in). The
+    /// original path is never retained (see the drop handler this comes from) so this always
+    /// re-materializes the ALREADY-CAPTURED content into a fresh temp file rather than assuming the
+    /// source file still exists where it was dropped from.</summary>
+    public sealed class FileAttachmentViewModel(string title, bool isPdf, string content) : ContentBlockViewModel
+    {
+        public string Title { get; } = title;
+
+        public ICommand OpenCommand { get; } = new RelayCommand(() => _ = OpenAsync(title, isPdf, content));
+
+        private static async Task OpenAsync(string title, bool isPdf, string content)
+        {
+            try
+            {
+                string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "TeronClaudeCodeVS-attachments",
+                    Guid.NewGuid().ToString("N"));
+                System.IO.Directory.CreateDirectory(dir);
+                string tempPath = System.IO.Path.Combine(dir, title);
+
+                if (isPdf)
+                {
+                    System.IO.File.WriteAllBytes(tempPath, Convert.FromBase64String(content));
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tempPath)
+                    {
+                        UseShellExecute = true,
+                    });
+                }
+                else
+                {
+                    System.IO.File.WriteAllText(tempPath, content);
+                    await MarkdownRenderer.OpenFileReferenceAsync(tempPath, null, null);
+                }
+            }
+            catch
+            {
+                // Opening a preview must never crash the chat over it.
+            }
+        }
+    }
+
+    /// <summary>
+    /// An Active File / Selection reference attached to a sent user message - shown as a code-glyph
+    /// chip (matching the official VS Code extension's own attachment thumbnails) rather than the
+    /// raw "@path#Lstart-Lend" text this used to be typed as. Clicking it opens the real file, at
+    /// the referenced line range if there is one, the same as an inline "@path" mention already does.
+    /// </summary>
+    public sealed class CodeReferenceAttachmentViewModel(string fullPath, string title, int? startLine, int? endLine)
+        : ContentBlockViewModel
+    {
+        public string Title { get; } = title;
+
+        public ICommand OpenCommand { get; } = new RelayCommand(
+            () => _ = MarkdownRenderer.OpenFileReferenceAsync(fullPath, startLine, endLine));
     }
 
     /// <summary>A streamed "thinking" block - collapsed by default, shown in a muted style.</summary>
@@ -75,10 +157,10 @@ namespace ClaudeCodeGUI.ViewModels
     }
 
     /// <summary>A tool call card: icon + summary while collapsed, full input/diff/output when expanded.</summary>
-    public sealed class ToolCallViewModel : ContentBlockViewModel, IMarkdownContent
+    public sealed class ToolCallViewModel(string toolUseId, string toolName) : ContentBlockViewModel, IMarkdownContent
     {
-        public string ToolUseId { get; }
-        public string ToolName { get; }
+        public string ToolUseId { get; } = toolUseId;
+        public string ToolName { get; } = toolName;
         public string Icon => ToolPresentation.GetIcon(ToolName);
         public string DisplayName => ToolPresentation.GetDisplayName(ToolName);
 
@@ -92,6 +174,7 @@ namespace ClaudeCodeGUI.ViewModels
                 {
                     OnPropertyChanged(nameof(Summary));
                     OnPropertyChanged(nameof(RawDiff));
+                    OnPropertyChanged(nameof(CanOpenDiffTab));
                     OnPropertyChanged(nameof(HasDetail));
                     OnPropertyChanged(nameof(HasMarkdownDetail));
                     OnPropertyChanged(nameof(DetailDocument));
@@ -151,6 +234,15 @@ namespace ClaudeCodeGUI.ViewModels
         public string? RawDiff => ToolPresentation.GetRawDiff(ToolName, _input);
 
         /// <summary>
+        /// FEAT-2: whether this call can be shown in a native side-by-side tab. Only the two
+        /// whole-file tools qualify - see <see cref="Core.VsDiffTab"/> for why a notebook edit
+        /// does not.
+        /// </summary>
+        public bool CanOpenDiffTab =>
+            (ToolName == "Edit" || ToolName == "Write") &&
+            ToolPresentation.GetFullPath(ToolName, _input) != null;
+
+        /// <summary>
         /// Markdown shown in the MarkdownViewer below the diff (output/error for Edit tools;
         /// full detail for all other tools).
         /// </summary>
@@ -173,7 +265,18 @@ namespace ClaudeCodeGUI.ViewModels
 
         public bool HasMarkdownDetail => DetailMarkdown != null;
 
-        public FlowDocument? DetailDocument => DetailMarkdown is string md ? MarkdownRenderer.Render(md) : null;
+        /// <summary>
+        /// Real bug found live 2026-09-06: this used to pass the tool's file path unconditionally,
+        /// so an Edit call's plain "**Output:**" wrap (RawDiff != null - see DetailMarkdown above,
+        /// the diff itself is already shown by DiffViewer, not here) inherited the file's name as
+        /// its header AND the "Insert at Cursor" dropdown, on what is just a success/failure
+        /// message with nothing to insert. The file path only belongs on a block that IS that
+        /// file's actual content (Write's full-file DetailMarkdown) - never on the output/error
+        /// wrap that rides alongside a diff already shown elsewhere.
+        /// </summary>
+        public FlowDocument? DetailDocument => DetailMarkdown is string md
+            ? MarkdownRenderer.Render(md, RawDiff != null ? null : ToolPresentation.GetFullPath(ToolName, _input))
+            : null;
 
         public FlowDocument Document => DetailDocument ?? new FlowDocument();
 
@@ -184,10 +287,22 @@ namespace ClaudeCodeGUI.ViewModels
             set => SetField(ref _isExpanded, value);
         }
 
-        public ToolCallViewModel(string toolUseId, string toolName)
+        /// <summary>The message this call's card lives in - lets the running-tasks panel scroll to it.</summary>
+        public ChatMessageViewModel? OwnerMessage { get; set; }
+
+        public DateTime StartedAtUtc { get; } = DateTime.UtcNow;
+
+        private string _elapsedText = "0s";
+        public string ElapsedText => _elapsedText;
+
+        /// <summary>Refreshed on the session's existing 1s status-line tick - no separate per-task timer.</summary>
+        public void RefreshElapsedText()
         {
-            ToolUseId = toolUseId;
-            ToolName = toolName;
+            TimeSpan elapsed = DateTime.UtcNow - StartedAtUtc;
+            string text = elapsed.TotalMinutes >= 1
+                ? $"{(int)elapsed.TotalMinutes}m{elapsed.Seconds}s"
+                : $"{elapsed.Seconds}s";
+            SetField(ref _elapsedText, text, nameof(ElapsedText));
         }
     }
 
@@ -197,15 +312,54 @@ namespace ClaudeCodeGUI.ViewModels
         public string ToolName { get; }
         public string Title { get; }
         public string Summary { get; }
+
+        /// <summary>
+        /// UX-3: the full, unabbreviated path the call would touch, or null for tools that act on
+        /// no single file. <see cref="Summary"/> deliberately abbreviates ("…/Core/Foo.cs") to stay
+        /// readable in a narrow tool window; an approval prompt is the one place where the user
+        /// must be able to see exactly which file on disk is at stake before saying yes.
+        /// </summary>
+        public string? FullPath { get; }
+
+        /// <summary>
+        /// The raw tool input, kept so FEAT-2 can compute both sides of a comparison from the
+        /// call the user is being asked to approve.
+        /// </summary>
+        public JObject Input { get; }
+
+        /// <summary>
+        /// FEAT-2: whether a native side-by-side tab can be opened from THIS card. It goes away
+        /// once the card is answered, and not only for tidiness: this card's comparison is built
+        /// from the working copy on the understanding that nothing has touched the file yet, which
+        /// stops being true the moment the edit is allowed. After that the finished tool call is
+        /// the card that knows the file has changed, and it carries its own button.
+        /// </summary>
+        public bool CanOpenDiffTab =>
+            !IsResolved &&
+            (ToolName == "Edit" || ToolName == "Write") &&
+            ToolPresentation.GetFullPath(ToolName, Input) != null;
+
+        /// <summary>
+        /// Line-level diff for Edit/NotebookEdit calls; null for everything else. Consumed by
+        /// DiffViewer, same as ToolCallViewModel.RawDiff - keeps the pending-approval card and the
+        /// resolved tool-call card showing an identical diff instead of two different renderers.
+        /// </summary>
+        public string? RawDiff { get; }
+
         public FlowDocument? DetailDocument { get; }
-        public bool HasDetail => DetailDocument != null;
+        public bool HasDetail => RawDiff != null || DetailDocument != null;
+        public bool HasMarkdownDetail => DetailDocument != null;
         public FlowDocument Document => DetailDocument ?? new FlowDocument();
 
         private bool _isResolved;
         public bool IsResolved
         {
             get => _isResolved;
-            private set => SetField(ref _isResolved, value);
+            private set
+            {
+                if (SetField(ref _isResolved, value))
+                    OnPropertyChanged(nameof(CanOpenDiffTab));
+            }
         }
 
         private string? _resolutionText;
@@ -215,34 +369,93 @@ namespace ClaudeCodeGUI.ViewModels
             private set => SetField(ref _resolutionText, value);
         }
 
+        /// <summary>
+        /// UX-3: free text the user can type instead of a bare Deny - "don't edit that file, add a
+        /// new one instead". Sent as the deny message, which the CLI surfaces to Claude verbatim,
+        /// so the turn continues with the correction rather than dead-ending on a refusal.
+        /// </summary>
+        private string _redirectText = "";
+        public string RedirectText
+        {
+            get => _redirectText;
+            set => SetField(ref _redirectText, value);
+        }
+
         public ICommand AllowCommand { get; }
         public ICommand AllowForSessionCommand { get; }
         public ICommand DenyCommand { get; }
 
+        /// <summary>Denies the call, passing <see cref="RedirectText"/> as the reason.</summary>
+        public ICommand SendRedirectCommand { get; }
+
         /// <summary>
-        /// The respond callback receives (allow, forSession). When forSession is true the caller
-        /// should remember the approval so future requests from the same tool are auto-allowed.
+        /// The respond callback receives (allow, forSession, denyMessage). When forSession is true
+        /// the caller should remember the approval so future requests from the same tool are
+        /// auto-allowed. denyMessage is null unless the user redirected instead of plainly denying.
         /// </summary>
-        public PermissionRequestViewModel(string toolName, string title, JObject input, Func<bool, bool, Task> respond)
+        public PermissionRequestViewModel(string toolName, string title, JObject input, Func<bool, bool, string?, Task> respond)
         {
             ToolName = toolName;
             Title = title;
+            Input = input;
             Summary = ToolPresentation.GetSummary(toolName, input);
+            FullPath = ToolPresentation.GetFullPath(toolName, input);
 
-            string? detail = ToolPresentation.GetDetailMarkdown(toolName, input, null, false);
-            DetailDocument = detail != null ? MarkdownRenderer.Render(detail) : null;
+            RawDiff = ToolPresentation.GetRawDiff(toolName, input);
 
-            AllowCommand = new RelayCommand(() => Resolve(true, false, respond), () => !IsResolved);
-            AllowForSessionCommand = new RelayCommand(() => Resolve(true, true, respond), () => !IsResolved);
-            DenyCommand = new RelayCommand(() => Resolve(false, false, respond), () => !IsResolved);
+            // When DiffViewer already shows the diff, don't also render it as a ```diff fence.
+            string? detail = RawDiff == null ? ToolPresentation.GetDetailMarkdown(toolName, input, null, false) : null;
+            DetailDocument = detail != null ? MarkdownRenderer.Render(detail, FullPath) : null;
+
+            AllowCommand = new RelayCommand(() => Resolve(true, false, null, respond), () => !IsResolved);
+            AllowForSessionCommand = new RelayCommand(() => Resolve(true, true, null, respond), () => !IsResolved);
+            DenyCommand = new RelayCommand(() => Resolve(false, false, null, respond), () => !IsResolved);
+
+            SendRedirectCommand = new RelayCommand(
+                () => Resolve(false, false, RedirectText.Trim(), respond),
+                () => !IsResolved && !string.IsNullOrWhiteSpace(RedirectText));
         }
 
-        private void Resolve(bool allow, bool forSession, Func<bool, bool, Task> respond)
+        /// <summary>Number-key and Esc handling for the pending card (UX-3). Returns true if the key was consumed.</summary>
+        public bool TryHandleShortcut(int oneBasedChoice)
+        {
+            if (IsResolved) return false;
+
+            switch (oneBasedChoice)
+            {
+                case 1: AllowCommand.Execute(null); return true;
+                case 2: AllowForSessionCommand.Execute(null); return true;
+                case 3: DenyCommand.Execute(null); return true;
+                default: return false;
+            }
+        }
+
+        private void Resolve(bool allow, bool forSession, string? denyMessage, Func<bool, bool, string?, Task> respond)
         {
             if (IsResolved) return;
             IsResolved = true;
-            ResolutionText = allow ? (forSession ? "Allowed for this session" : "Allowed") : "Denied";
-            _ = respond(allow, forSession);
+            ResolutionText = allow
+                ? (forSession ? "Allowed for this session" : "Allowed")
+                : (denyMessage != null ? $"Redirected: {denyMessage}" : "Denied");
+            _ = respond(allow, forSession, denyMessage);
+        }
+    }
+
+    /// <summary>One selectable option inside a question, tracking its own checked state.</summary>
+    public sealed class SelectableOptionViewModel(AskQuestionOption option, string radioGroupName) : ObservableObject
+    {
+        public AskQuestionOption Option { get; } = option;
+        public string Label => Option.Label;
+        public string Description => Option.Description;
+
+        /// <summary>Shared by every option under the same question, for RadioButton mutual exclusion; unused for checkboxes.</summary>
+        public string RadioGroupName { get; } = radioGroupName;
+
+        private bool _isSelected;
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set => SetField(ref _isSelected, value);
         }
     }
 
@@ -251,13 +464,18 @@ namespace ClaudeCodeGUI.ViewModels
     {
         public AskQuestion Question { get; }
         public bool HasOptions => Question.Options.Length > 0;
+        public bool IsMultiSelect => Question.IsMultiSelect;
+        public bool IsSingleSelectWithOptions => HasOptions && !IsMultiSelect;
 
-        private int _selectedIndex = -1;
-        public int SelectedIndex
-        {
-            get => _selectedIndex;
-            set => SetField(ref _selectedIndex, value);
-        }
+        /// <summary>Backs both the single-select (RadioButton) and multi-select (CheckBox) lists; mirrors Question.Options 1:1.</summary>
+        public ObservableCollection<SelectableOptionViewModel> Options { get; }
+
+        /// <summary>
+        /// Unique per question instance so RadioButtons from different questions in the same card
+        /// don't cross-exclude each other (WPF groups RadioButtons by GroupName across the whole
+        /// visual tree, not just within one ItemsControl).
+        /// </summary>
+        public string RadioGroupName { get; } = Guid.NewGuid().ToString("N");
 
         private string _answerText = "";
         public string AnswerText
@@ -270,21 +488,29 @@ namespace ClaudeCodeGUI.ViewModels
         {
             if (HasOptions)
             {
-                return _selectedIndex >= 0 && _selectedIndex < Question.Options.Length
-                    ? Question.Options[_selectedIndex].Value
-                    : null;
+                if (IsMultiSelect)
+                {
+                    var selected = Options.Where(o => o.IsSelected).Select(o => o.Option.Value).ToArray();
+                    return selected.Length > 0 ? string.Join(", ", selected) : null;
+                }
+                return Options.FirstOrDefault(o => o.IsSelected)?.Option.Value;
             }
             return string.IsNullOrWhiteSpace(_answerText) ? null : _answerText.Trim();
         }
 
-        public QuestionAnswerViewModel(AskQuestion question) { Question = question; }
+        public QuestionAnswerViewModel(AskQuestion question)
+        {
+            Question = question;
+            Options = new ObservableCollection<SelectableOptionViewModel>(
+                question.Options.Select(o => new SelectableOptionViewModel(o, RadioGroupName)));
+        }
     }
 
     /// <summary>An inline card for `ask_user_question` control requests — lets the user answer before Claude continues.</summary>
     public sealed class AskUserQuestionViewModel : ContentBlockViewModel
     {
         public ObservableCollection<QuestionAnswerViewModel> QuestionAnswers { get; }
-            = new ObservableCollection<QuestionAnswerViewModel>();
+            = [];
 
         private bool _isResolved;
         public bool IsResolved
@@ -317,7 +543,7 @@ namespace ClaudeCodeGUI.ViewModels
             if (IsResolved) return;
             IsResolved = true;
 
-            var answers = new Dictionary<string, string>();
+            Dictionary<string, string> answers = [];
             if (!skip)
             {
                 foreach (var qa in QuestionAnswers)
@@ -333,19 +559,275 @@ namespace ClaudeCodeGUI.ViewModels
         }
     }
 
+    /// <summary>One user comment anchored to a quoted excerpt of the plan text, added from the
+    /// native plan-preview tab's selection adornment (see Controls/PlanCommentAdornment.cs).</summary>
+    public sealed class PlanCommentEntry
+    {
+        public string QuotedExcerpt { get; }
+        public string CommentText { get; }
+        public ICommand RemoveCommand { get; }
+
+        public PlanCommentEntry(string quotedExcerpt, string commentText, Action<PlanCommentEntry> onRemove)
+        {
+            QuotedExcerpt = quotedExcerpt;
+            CommentText = commentText;
+            RemoveCommand = new RelayCommand(() => onRemove(this));
+        }
+    }
+
+    /// <summary>
+    /// The `ExitPlanMode` approval card. Deliberately not a reuse of PermissionRequestViewModel -
+    /// the real extension's semantics here are different: three choices (auto-accept future edits /
+    /// manually approve edits / keep planning) instead of Allow/Allow-for-session/Deny, plus a
+    /// free-text box and comments anchored to specific spans of the plan. Adding any comment swaps
+    /// the primary action to a single "Send feedback and keep planning" button, matching the real
+    /// UI's observed behavior (confirmed live, 2026-08-27).
+    /// </summary>
+    public sealed class PlanApprovalViewModel : ContentBlockViewModel
+    {
+        public string PlanMarkdown { get; }
+        public string PlanFilePath { get; }
+
+        public ObservableCollection<PlanCommentEntry> Comments { get; } = [];
+        public bool HasComments => Comments.Count > 0;
+
+        private string _feedbackText = "";
+        public string FeedbackText
+        {
+            get => _feedbackText;
+            set => SetField(ref _feedbackText, value);
+        }
+
+        private bool _isResolved;
+        public bool IsResolved
+        {
+            get => _isResolved;
+            private set => SetField(ref _isResolved, value);
+        }
+
+        private string? _resolutionText;
+        public string? ResolutionText
+        {
+            get => _resolutionText;
+            private set => SetField(ref _resolutionText, value);
+        }
+
+        public ICommand AutoAcceptCommand { get; }
+        public ICommand ManuallyApproveCommand { get; }
+        public ICommand KeepPlanningCommand { get; }
+        public ICommand SendFeedbackCommand { get; }
+        public ICommand ReopenTabCommand { get; }
+
+        /// <summary>The respond callback receives (allow, autoAccept, denyMessage).</summary>
+        public PlanApprovalViewModel(string planMarkdown, string planFilePath, Func<bool, bool, string?, Task> respond, Action reopenTab)
+        {
+            PlanMarkdown = planMarkdown;
+            PlanFilePath = planFilePath;
+
+            AutoAcceptCommand = new RelayCommand(() => Resolve(true, true, respond), () => !IsResolved);
+            ManuallyApproveCommand = new RelayCommand(() => Resolve(true, false, respond), () => !IsResolved);
+            KeepPlanningCommand = new RelayCommand(() => Resolve(false, false, respond), () => !IsResolved);
+            SendFeedbackCommand = new RelayCommand(() => Resolve(false, false, respond), () => !IsResolved);
+            ReopenTabCommand = new RelayCommand(reopenTab);
+        }
+
+        /// <summary>Called from the plan-preview tab's comment adornment when the user submits a comment.</summary>
+        public void AddComment(string quotedExcerpt, string commentText)
+        {
+            if (IsResolved) return;
+            Comments.Add(new PlanCommentEntry(quotedExcerpt, commentText, RemoveComment));
+            OnPropertyChanged(nameof(HasComments));
+        }
+
+        private void RemoveComment(PlanCommentEntry entry)
+        {
+            Comments.Remove(entry);
+            OnPropertyChanged(nameof(HasComments));
+        }
+
+        private void Resolve(bool allow, bool autoAccept, Func<bool, bool, string?, Task> respond)
+        {
+            if (IsResolved) return;
+            IsResolved = true;
+
+            // Hides the "Add Comment" affordance on the plan tab once this card resolves - the
+            // registry check in PlanCommentAdornmentManager.OnSelectionChanged is what actually
+            // gates the button, so this doesn't need to touch the MEF component directly.
+            if (!string.IsNullOrEmpty(PlanFilePath))
+                PlanCommentRegistry.UnregisterActivePlan(PlanFilePath);
+
+            string? message = null;
+            if (!allow)
+            {
+                // Format confirmed live (2026-08-27): the real extension delivers comments as
+                // `[Re: "<quoted excerpt>"] <comment text>` blocks inside the deny message, not
+                // through any separate wire-level comment mechanism.
+                List<string> parts = [];
+                foreach (PlanCommentEntry c in Comments)
+                    parts.Add($"[Re: \"{c.QuotedExcerpt}\"] {c.CommentText}");
+                if (!string.IsNullOrWhiteSpace(_feedbackText))
+                    parts.Add(_feedbackText.Trim());
+                message = parts.Count > 0 ? string.Join("\n", parts) : "The user chose to keep planning.";
+            }
+
+            ResolutionText = allow
+                ? (autoAccept ? "Approved — auto-accepting edits" : "Approved")
+                : "Sent feedback — continuing to plan";
+            _ = respond(allow, autoAccept, message);
+        }
+    }
+
     /// <summary>Shown in the chat when the user stops the agent mid-turn.</summary>
     public sealed class InterruptedBlockViewModel : ContentBlockViewModel { }
 
     /// <summary>The small "Done · 1.2s · $0.0012" line at the end of a completed turn.</summary>
-    public sealed class ResultFooterViewModel : ContentBlockViewModel
+    public sealed class ResultFooterViewModel(string text, bool isError) : ContentBlockViewModel
     {
-        public string Text { get; }
-        public bool IsError { get; }
+        public string Text { get; } = text;
+        public bool IsError { get; } = isError;
+    }
 
-        public ResultFooterViewModel(string text, bool isError)
+    /// <summary>A turn that failed or was cut off (unexpected process exit, rate limit, ...) - shown
+    /// with an explicit "Try again" affordance that resends the original prompt verbatim, so the
+    /// model never has to guess what a follow-up "Continue" refers to.</summary>
+    public sealed class RetryNoticeViewModel(string text, Action onRetry) : ContentBlockViewModel
+    {
+        public string Text { get; } = text;
+        public ICommand RetryCommand { get; } = new RelayCommand(onRetry);
+    }
+    /// <summary>
+    /// A two-choice card with numbered actions, used wherever we need an in-chat yes/no that is
+    /// not a tool-permission prompt: the GAP-1 terminal hand-off cards, and the confirmations in
+    /// front of the two outward-facing GAP-3 commands (`/feedback`, which uploads the transcript
+    /// to Anthropic, and `/remote-control`, which exposes the session at claude.ai/code). Both of
+    /// those leave this machine, so neither fires on the command alone.
+    ///
+    /// Deliberately shares the permission card's visual language and its numbered-shortcut
+    /// convention (UX-3/UX-12) rather than inventing a third card shape.
+    /// </summary>
+    public sealed class ChoiceCardViewModel : ContentBlockViewModel
+    {
+        private readonly Func<bool, Task<string>> _onChoice;
+
+        public string Title { get; }
+        public string Description { get; }
+
+        /// <summary>Optional monospace line under the description - e.g. the command about to run.</summary>
+        public string? Detail { get; }
+
+        public string PrimaryLabel { get; }
+        public string SecondaryLabel { get; }
+
+        public ICommand PrimaryCommand { get; }
+        public ICommand SecondaryCommand { get; }
+
+        /// <summary>Raised once, when either action is taken. Lets the session drop its
+        /// "currently pending" reference without polling the whole message list.</summary>
+        public event EventHandler? Resolved;
+
+        private bool _isResolved;
+        public bool IsResolved
         {
-            Text = text;
-            IsError = isError;
+            get => _isResolved;
+            private set => SetField(ref _isResolved, value);
+        }
+
+        private string _resolutionText = "";
+        public string ResolutionText
+        {
+            get => _resolutionText;
+            private set => SetField(ref _resolutionText, value);
+        }
+
+        public ChoiceCardViewModel(string title, string description, string? detail,
+            string primaryLabel, string secondaryLabel, Func<bool, Task<string>> onChoice)
+        {
+            Title = title;
+            Description = description;
+            Detail = detail;
+            PrimaryLabel = primaryLabel;
+            SecondaryLabel = secondaryLabel;
+            _onChoice = onChoice;
+            PrimaryCommand = new RelayCommand(() => Choose(true));
+            SecondaryCommand = new RelayCommand(() => Choose(false));
+        }
+
+        /// <summary>Handles the `1`/`2` keys while this card is the pending one. See UX-3.</summary>
+        public bool TryHandleShortcut(int oneBasedChoice)
+        {
+            if (IsResolved)
+                return false;
+
+            if (oneBasedChoice == 1) { Choose(true); return true; }
+            if (oneBasedChoice == 2) { Choose(false); return true; }
+            return false;
+        }
+
+        private void Choose(bool accepted)
+        {
+            if (IsResolved)
+                return;
+
+            // Collapse the buttons immediately - the action may take a round trip (feedback
+            // upload, remote-control bridge handshake) and a still-live button would invite a
+            // second click that sends the whole thing twice.
+            IsResolved = true;
+            // Declining resolves synchronously below, so only the accept path ever shows this.
+            ResolutionText = accepted ? "Working…" : "";
+            Resolved?.Invoke(this, EventArgs.Empty);
+
+            _ = RunAsync(accepted);
+        }
+
+        private async Task RunAsync(bool accepted)
+        {
+            try
+            {
+                ResolutionText = await _onChoice(accepted).ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                ResolutionText = ex.Message;
+            }
+        }
+    }
+
+    /// <summary>
+    /// GAP-3 `/btw`: a quick side question answered without disturbing the main conversation.
+    /// Backed by the CLI's own `side_question` control request, so the answer sees the current
+    /// session's context but adds nothing to its transcript.
+    /// </summary>
+    public sealed class SideQuestionViewModel(string question) : ContentBlockViewModel, IMarkdownContent
+    {
+        public string Question { get; } = question;
+
+        private string _answer = "";
+        public string Answer
+        {
+            get => _answer;
+            set
+            {
+                if (SetField(ref _answer, value))
+                {
+                    OnPropertyChanged(nameof(Document));
+                    OnPropertyChanged(nameof(HasAnswer));
+                }
+            }
+        }
+
+        public bool HasAnswer => !string.IsNullOrEmpty(_answer);
+
+        public FlowDocument Document => MarkdownRenderer.Render(_answer);
+
+        /// <summary>
+        /// Progress or failure line. Null once a real answer has arrived - the template hides it
+        /// on null, so this must be nulled rather than blanked or the card keeps an empty row.
+        /// </summary>
+        private string? _statusText = "Asking…";
+        public string? StatusText
+        {
+            get => _statusText;
+            set => SetField(ref _statusText, value);
         }
     }
 }

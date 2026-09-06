@@ -1,4 +1,4 @@
-using ClaudeCodeGUI.Protocol;
+﻿using TeronClaudeCodeVS.Protocol;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
@@ -8,8 +8,57 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace ClaudeCodeGUI.Core
+namespace TeronClaudeCodeVS.Core
 {
+    /// <summary>
+    /// The optional, less-frequently-changed CLI flags for <see cref="ClaudeCodeSession.Start"/>,
+    /// bundled to keep that method's signature from growing an unwieldy parameter list as CLI
+    /// flag parity expands. Model/permission-mode/effort/resume stay as direct parameters since
+    /// they're the ones already switchable live from the chat UI.
+    /// </summary>
+    public sealed class ClaudeSessionStartOptions
+    {
+        /// <summary>Extra directories the CLI is allowed to read/write, via --add-dir.</summary>
+        public IReadOnlyList<string>? AdditionalDirectories { get; set; }
+
+        /// <summary>Tool names to allow, via --allowedTools.</summary>
+        public IReadOnlyList<string>? AllowedTools { get; set; }
+
+        /// <summary>Tool names to deny, via --disallowedTools.</summary>
+        public IReadOnlyList<string>? DisallowedTools { get; set; }
+
+        /// <summary>Text appended to the default system prompt, via --append-system-prompt.</summary>
+        public string? AppendSystemPrompt { get; set; }
+
+        /// <summary>Replaces the entire default system prompt, via --system-prompt.</summary>
+        public string? SystemPrompt { get; set; }
+
+        /// <summary>Paths to MCP server config JSON files, via --mcp-config.</summary>
+        public IReadOnlyList<string>? McpConfigPaths { get; set; }
+
+        /// <summary>Only use MCP servers from <see cref="McpConfigPaths"/>, via --strict-mcp-config.</summary>
+        public bool StrictMcpConfig { get; set; }
+
+        /// <summary>
+        /// FEAT-7. Model, or comma-separated chain of models, to fall back to when the selected one
+        /// is overloaded or unavailable - via --fallback-model. Null or blank leaves the flag off.
+        /// The CLI's own help is explicit that this flag "only works with --print", which is the
+        /// mode this session always runs in.
+        /// </summary>
+        public string? FallbackModel { get; set; }
+    }
+
+    /// <summary>A dropped text/code file (raw text content) or PDF (base64) attached to an outgoing user message.</summary>
+    public readonly struct PendingFileContent(string title, bool isPdf, string content)
+    {
+        public string Title { get; } = title;
+
+        /// <summary>True for a PDF (Content is base64 bytes); false for text/code (Content is raw text).</summary>
+        public bool IsPdf { get; } = isPdf;
+
+        public string Content { get; } = content;
+    }
+
     /// <summary>
     /// Hosts a single `claude -p --input-format stream-json --output-format stream-json
     /// --include-partial-messages --verbose` process and exposes its NDJSON protocol as
@@ -20,11 +69,13 @@ namespace ClaudeCodeGUI.Core
     {
         private Process? _process;
         private StreamWriter? _stdin;
-        private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim _writeLock = new(1, 1);
         private bool _disposed;
 
         public event EventHandler<InitMessage>? SessionInitialized;
         public event EventHandler<StatusMessage>? StatusChanged;
+        public event EventHandler<CompactBoundaryEvent>? CompactBoundary;
+        public event EventHandler<ModelFallbackEvent>? ModelFallback;
         public event EventHandler<MessageStartEvent>? MessageStarted;
         public event EventHandler<ContentBlockStartEvent>? BlockStarted;
         public event EventHandler<TextDeltaEvent>? TextDelta;
@@ -35,23 +86,42 @@ namespace ClaudeCodeGUI.Core
         public event EventHandler<ResultMessage>? TurnCompleted;
         public event EventHandler<PermissionRequestEvent>? PermissionRequested;
         public event EventHandler<AskUserQuestionEvent>? AskUserQuestionRequested;
+        public event EventHandler<ControlResponseEvent>? ControlResponseReceived;
+        public event EventHandler<RateLimitEvent>? RateLimitUpdated;
         public event EventHandler<string>? RawLineReceived;
         public event EventHandler<string>? ErrorReceived;
         public event EventHandler? ProcessExited;
+
+        // Correlates a client-originated control_request (e.g. interrupt) with its eventual
+        // control_response, keyed by request_id. Written from SendInterruptAsync (any thread),
+        // completed from HandleLine (the stdout read-loop thread) - lock-protected.
+        private readonly Dictionary<string, TaskCompletionSource<ControlResponseEvent>> _pendingControlResponses =
+            [];
 
         /// <summary>The session id reported by the most recent `init`/`result` message, for `--resume`.</summary>
         public string? LastSessionId { get; private set; }
 
         public bool IsRunning => _process != null && !_process.HasExited;
 
-        /// <summary>Starts the underlying `claude` process. Output is consumed on background tasks.</summary>
-        public void Start(string claudePath, string workingDirectory, string? model, string permissionMode, string? resumeSessionId = null, string? effortArg = null)
+        /// <summary>
+        /// Starts the underlying `claude` process. Output is consumed on background tasks.
+        ///
+        /// <paramref name="forkSession"/> and <paramref name="resumeSessionAt"/> are FEAT-1's fork
+        /// half and are deliberately parameters rather than fields on
+        /// <see cref="ClaudeSessionStartOptions"/>: that object is built once from the options page
+        /// and reused for every restart, whereas these two apply to exactly one restart and would
+        /// silently fork every later one if they were left on it.
+        /// </summary>
+        public void Start(string claudePath, string workingDirectory, string? model, string? permissionMode,
+            string? resumeSessionId = null, string? effortArg = null, ClaudeSessionStartOptions? options = null,
+            (int Port, string AuthToken)? ideServer = null,
+            bool forkSession = false, string? resumeSessionAt = null)
         {
             if (_process != null)
                 throw new InvalidOperationException("Session already started.");
 
             string fileName = claudePath;
-            var args = new List<string>();
+            List<string> args = [];
 
             string ext = Path.GetExtension(claudePath);
             if (string.Equals(ext, ".cmd", StringComparison.OrdinalIgnoreCase) ||
@@ -71,8 +141,24 @@ namespace ClaudeCodeGUI.Core
             args.Add("stream-json");
             args.Add("--include-partial-messages");
             args.Add("--verbose");
-            args.Add("--permission-mode");
-            args.Add(permissionMode);
+
+            // Without this, built-in tool permission requests (Edit/Write/Bash/...) never reach
+            // the control_request/can_use_tool flow at all in -p/headless mode - confirmed live
+            // (2026-08-26): a synthetic harness reproduced a synchronous
+            // {"type":"system","subtype":"permission_denied"} for Edit even with zero IDE
+            // integration, --allowedTools, or --mcp-config involved, and confirming the official
+            // VS Code extension's own real claude.exe invocation (captured live via
+            // Get-CimInstance Win32_Process) always passes this flag. This is what makes the
+            // stdin/stdout control_response protocol this extension already implements
+            // (RespondToPermissionAsync) the thing the CLI actually calls into.
+            args.Add("--permission-prompt-tool");
+            args.Add("stdio");
+
+            if (!string.IsNullOrWhiteSpace(permissionMode))
+            {
+                args.Add("--permission-mode");
+                args.Add(permissionMode!);
+            }
 
             if (!string.IsNullOrWhiteSpace(model))
             {
@@ -80,10 +166,32 @@ namespace ClaudeCodeGUI.Core
                 args.Add(model!);
             }
 
+            if (!string.IsNullOrWhiteSpace(options?.FallbackModel))
+            {
+                args.Add("--fallback-model");
+                args.Add(options!.FallbackModel!);
+            }
+
             if (!string.IsNullOrWhiteSpace(resumeSessionId))
             {
                 args.Add("--resume");
                 args.Add(resumeSessionId!);
+
+                // FEAT-1's fork. Both flags only mean anything alongside --resume, and both are
+                // hidden from `claude --help`, so they were verified against the real CLI before
+                // anything was built on them (2026-08-30, v2.1.251): forking a two-turn session at
+                // the first turn's last entry produced a new session id, a transcript holding turn
+                // one and the new prompt only, and an untouched original. --resume-session-at keeps
+                // everything up to AND INCLUDING the id it is given, which is why the caller passes
+                // the entry before the message being rewound to rather than the message itself.
+                if (forkSession)
+                    args.Add("--fork-session");
+
+                if (!string.IsNullOrWhiteSpace(resumeSessionAt))
+                {
+                    args.Add("--resume-session-at");
+                    args.Add(resumeSessionAt!);
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(effortArg))
@@ -92,7 +200,97 @@ namespace ClaudeCodeGUI.Core
                 args.Add(effortArg!);
             }
 
-            var psi = new ProcessStartInfo
+            if (options?.AdditionalDirectories?.Count > 0)
+            {
+                args.Add("--add-dir");
+                args.AddRange(options.AdditionalDirectories);
+            }
+
+            // mcp__ide__getDiagnostics needs to be pre-authorized here, not approved live.
+            // Root-caused live (2026-08-26): MCP-server-sourced tools don't go through the normal
+            // can_use_tool control_request flow at all - an unauthorized call comes back as a
+            // synchronous {"type":"system","subtype":"permission_denied"} event with no
+            // opportunity for any UI prompt to exist, confirmed by reproducing it against the real
+            // CLI and then confirming --allowedTools eliminates it entirely (permission_denials
+            // goes from non-empty to []). Only getDiagnostics is exposed as a model-callable tool
+            // (the rest of the 11-tool surface is used internally by the CLI's own UI-driven flows
+            // like openDiff, which already goes through the existing can_use_tool approval this
+            // extension already handles for Edit/Write) - see docs/Phase 3 for the full trace.
+            List<string> allowedTools = [];
+            if (ideServer.HasValue)
+                allowedTools.Add("mcp__ide__getDiagnostics");
+            if (options?.AllowedTools?.Count > 0)
+                allowedTools.AddRange(options.AllowedTools);
+
+            if (allowedTools.Count > 0)
+            {
+                args.Add("--allowedTools");
+                args.AddRange(allowedTools);
+            }
+
+            if (options?.DisallowedTools?.Count > 0)
+            {
+                args.Add("--disallowedTools");
+                args.AddRange(options.DisallowedTools);
+            }
+
+            if (!string.IsNullOrWhiteSpace(options?.AppendSystemPrompt))
+            {
+                args.Add("--append-system-prompt");
+                args.Add(options!.AppendSystemPrompt!);
+            }
+
+            if (!string.IsNullOrWhiteSpace(options?.SystemPrompt))
+            {
+                args.Add("--system-prompt");
+                args.Add(options!.SystemPrompt!);
+            }
+
+            // Registering the IDE companion server as an explicit --mcp-config entry (bundled into
+            // the same flag invocation as any user-configured McpConfigPaths, since the CLI treats
+            // --strict-mcp-config as "only servers from --mcp-config" and this needs to survive
+            // that). Root-caused live (2026-08-26): --ide + CLAUDE_CODE_SSE_PORT (this method's
+            // original design, based on reading the official extension's source) never attempts a
+            // connection at all in -p/headless mode - confirmed via the CLI's own debug log
+            // showing zero IDE-related activity. An explicit ws-transport --mcp-config entry does
+            // work (confirmed end-to-end: mcp_servers:[{"name":"ide","status":"connected"}] in a
+            // real init message) once the server also echoes back the "mcp" subprotocol the CLI's
+            // WebSocket client requests (see IdeCompanionServer.HandleConnectionAsync).
+            List<string> mcpConfigValues = [];
+            if (ideServer.HasValue)
+            {
+                JObject ideServerConfig = new()
+                {
+                    ["mcpServers"] = new JObject
+                    {
+                        ["ide"] = new JObject
+                        {
+                            ["type"] = "ws",
+                            ["url"] = $"ws://127.0.0.1:{ideServer.Value.Port}",
+                            ["headers"] = new JObject
+                            {
+                                ["X-Claude-Code-Ide-Authorization"] = ideServer.Value.AuthToken
+                            }
+                        }
+                    }
+                };
+                mcpConfigValues.Add(ideServerConfig.ToString(Newtonsoft.Json.Formatting.None));
+            }
+            if (options?.McpConfigPaths?.Count > 0)
+                mcpConfigValues.AddRange(options.McpConfigPaths);
+
+            if (mcpConfigValues.Count > 0)
+            {
+                args.Add("--mcp-config");
+                args.AddRange(mcpConfigValues);
+            }
+
+            if (options?.StrictMcpConfig == true)
+            {
+                args.Add("--strict-mcp-config");
+            }
+
+            ProcessStartInfo psi = new()
             {
                 FileName = fileName,
                 Arguments = BuildArguments(args),
@@ -125,7 +323,7 @@ namespace ClaudeCodeGUI.Core
         /// </summary>
         private static string BuildArguments(IEnumerable<string> args)
         {
-            var sb = new StringBuilder();
+            StringBuilder sb = new();
             foreach (var arg in args)
             {
                 if (sb.Length != 0)
@@ -185,16 +383,61 @@ namespace ClaudeCodeGUI.Core
             return -1;
         }
 
-        /// <summary>Sends a plain-text user turn.</summary>
-        public Task SendUserMessageAsync(string text)
+        /// <summary>
+        /// Sends a user turn, optionally with one or more pasted screenshots and/or dropped files
+        /// attached first - real Anthropic Messages API content-block shapes confirmed by reading
+        /// the official VS Code extension's own webview bundle (2026-08-27), not guessed:
+        /// image: {"type":"image","source":{"type":"base64","media_type":"image/png","data":"..."}}
+        /// text doc: {"type":"document","source":{"type":"text","media_type":"text/plain","data":"&lt;raw text, not base64&gt;"},"title":"..."}
+        /// pdf doc: {"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"..."},"title":"..."}
+        /// </summary>
+        public Task SendUserMessageAsync(string text, System.Collections.Generic.IReadOnlyList<string>? imagesBase64Png = null,
+            System.Collections.Generic.IReadOnlyList<PendingFileContent>? files = null)
         {
-            var payload = new JObject
+            JArray content = [];
+
+            if (imagesBase64Png != null)
+            {
+                foreach (string base64Png in imagesBase64Png)
+                {
+                    content.Add(new JObject
+                    {
+                        ["type"] = "image",
+                        ["source"] = new JObject
+                        {
+                            ["type"] = "base64",
+                            ["media_type"] = "image/png",
+                            ["data"] = base64Png
+                        }
+                    });
+                }
+            }
+
+            if (files != null)
+            {
+                foreach (PendingFileContent file in files)
+                {
+                    content.Add(new JObject
+                    {
+                        ["type"] = "document",
+                        ["source"] = file.IsPdf
+                            ? new JObject { ["type"] = "base64", ["media_type"] = "application/pdf", ["data"] = file.Content }
+                            : new JObject { ["type"] = "text", ["media_type"] = "text/plain", ["data"] = file.Content },
+                        ["title"] = file.Title
+                    });
+                }
+            }
+
+            if (!string.IsNullOrEmpty(text))
+                content.Add(new JObject { ["type"] = "text", ["text"] = text });
+
+            JObject payload = new()
             {
                 ["type"] = "user",
                 ["message"] = new JObject
                 {
                     ["role"] = "user",
-                    ["content"] = new JArray { new JObject { ["type"] = "text", ["text"] = text } }
+                    ["content"] = content
                 }
             };
             return WriteLineAsync(payload);
@@ -203,11 +446,11 @@ namespace ClaudeCodeGUI.Core
         /// <summary>Answers an `ask_user_question` control request with the user's selections.</summary>
         public Task RespondToAskUserQuestionAsync(string requestId, System.Collections.Generic.Dictionary<string, string> answers)
         {
-            var answersObj = new JObject();
+            JObject answersObj = [];
             foreach (var kv in answers)
                 answersObj[kv.Key] = kv.Value;
 
-            var payload = new JObject
+            JObject payload = new()
             {
                 ["type"] = "control_response",
                 ["response"] = new JObject
@@ -230,7 +473,7 @@ namespace ClaudeCodeGUI.Core
             if (allow && updatedInput != null)
                 response["updatedInput"] = updatedInput;
 
-            var payload = new JObject
+            JObject payload = new()
             {
                 ["type"] = "control_response",
                 ["response"] = new JObject
@@ -241,6 +484,135 @@ namespace ClaudeCodeGUI.Core
                 }
             };
             return WriteLineAsync(payload);
+        }
+
+        /// <summary>
+        /// Sends a client-originated interrupt control_request (confirmed live against the real
+        /// CLI in this exact -p/stream-json invocation mode: the process stays alive, aborts the
+        /// in-flight turn, and accepts a normal follow-up turn afterward with no --resume needed).
+        /// Returns the correlated control_response, or null if none arrives within <paramref name="timeoutMs"/>.
+        /// </summary>
+        public Task<ControlResponseEvent?> SendInterruptAsync(bool cancelQueued = false, int timeoutMs = 5000)
+        {
+            JObject request = new() { ["subtype"] = "interrupt" };
+            if (cancelQueued)
+                request["cancel_queued"] = true;
+
+            return SendControlRequestAsync(request, timeoutMs);
+        }
+
+        /// <summary>
+        /// Sends an arbitrary client-originated control_request and waits for the correlated
+        /// control_response. Returns null if none arrives within <paramref name="timeoutMs"/>.
+        ///
+        /// This is the same channel `interrupt` and the permission responses already ride on; it
+        /// was generalised for GAP-3, whose three commands (`side_question`, `submit_feedback`,
+        /// `remote_control`) all turned out to be real control-request subtypes handled by the
+        /// CLI itself - verified against the shipped binary (v2.1.251), not inferred from the
+        /// official extension's SDK wrapper.
+        /// </summary>
+        public async Task<ControlResponseEvent?> SendControlRequestAsync(JObject request, int timeoutMs)
+        {
+            string requestId = Guid.NewGuid().ToString();
+            TaskCompletionSource<ControlResponseEvent> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (_pendingControlResponses)
+            {
+                _pendingControlResponses[requestId] = tcs;
+            }
+
+            JObject payload = new()
+            {
+                ["type"] = "control_request",
+                ["request_id"] = requestId,
+                ["request"] = request
+            };
+
+            await WriteLineAsync(payload).ConfigureAwait(false);
+
+            var completed = await Task.WhenAny(tcs.Task, Task.Delay(timeoutMs)).ConfigureAwait(false);
+
+            lock (_pendingControlResponses)
+            {
+                _pendingControlResponses.Remove(requestId);
+            }
+
+            return completed == tcs.Task ? await tcs.Task.ConfigureAwait(false) : null;
+        }
+
+        /// <summary>
+        /// FEAT-1. Asks the CLI to restore every file changed since <paramref name="userMessageId"/>
+        /// to the state it was in just before that message.
+        ///
+        /// <para>This is the CLI's own operation, not a reimplementation of it. The alternative -
+        /// reading `~/.claude/file-history` and writing the backups back ourselves - was already
+        /// half-built here for FEAT-2 and is a read that is easy to get subtly wrong (see
+        /// <see cref="ViewModels.SessionCheckpointStore"/>'s note on deltas). The CLI additionally
+        /// refuses paths that turned into links or moved since the checkpoint, and reports how many
+        /// it skipped; none of that would survive being rebuilt from the outside.</para>
+        ///
+        /// <para><paramref name="dryRun"/> is what makes the confirmation honest. Verified against
+        /// the real CLI (2026-08-30, v2.1.251): a dry run answers with the real file list and the
+        /// real insertion/deletion counts and writes nothing - the scratch file it named was still
+        /// on its later contents afterwards - while the same call with dryRun false restored it.
+        /// The two shapes differ: a dry run reports filesChanged/insertions/deletions and never
+        /// skippedLinks, a real one reports skippedLinks and none of the rest.</para>
+        ///
+        /// Returns null if the CLI never answers within the timeout.
+        /// </summary>
+        public Task<ControlResponseEvent?> RewindFilesAsync(string userMessageId, bool dryRun, int timeoutMs = 60000)
+        {
+            JObject request = new()
+            {
+                ["subtype"] = "rewind_files",
+                ["user_message_id"] = userMessageId,
+                ["dry_run"] = dryRun
+            };
+            return SendControlRequestAsync(request, timeoutMs);
+        }
+
+        /// <summary>
+        /// GAP-3 `/btw`. Asks a one-off question that sees the session's context but is not added
+        /// to its transcript. Generous timeout: this is a real model call, not a local toggle.
+        /// </summary>
+        public Task<ControlResponseEvent?> SendSideQuestionAsync(string question, int timeoutMs = 300000)
+        {
+            JObject request = new()
+            {
+                ["subtype"] = "side_question",
+                ["question"] = question
+            };
+            return SendControlRequestAsync(request, timeoutMs);
+        }
+
+        /// <summary>
+        /// GAP-3 `/feedback`. Uploads the description together with the session transcript to
+        /// Anthropic. Outward-facing, so callers must confirm before calling this.
+        /// </summary>
+        public Task<ControlResponseEvent?> SubmitFeedbackAsync(string description, int timeoutMs = 60000)
+        {
+            JObject request = new()
+            {
+                ["subtype"] = "submit_feedback",
+                ["description"] = description,
+                // Baseline's SDK path sends no surface and the CLI defaults it to "sdk"; being
+                // explicit keeps our reports distinguishable from the VS Code extension's.
+                ["surface"] = "sdk"
+            };
+            return SendControlRequestAsync(request, timeoutMs);
+        }
+
+        /// <summary>
+        /// GAP-3 `/remote-control`. Enables or disables the bridge that makes this session
+        /// visible and drivable from claude.ai/code. Outward-facing; callers must confirm.
+        /// </summary>
+        public Task<ControlResponseEvent?> SetRemoteControlAsync(bool enabled, int timeoutMs = 60000)
+        {
+            JObject request = new()
+            {
+                ["subtype"] = "remote_control",
+                ["enabled"] = enabled
+            };
+            return SendControlRequestAsync(request, timeoutMs);
         }
 
         private async Task WriteLineAsync(JObject payload)
@@ -319,8 +691,23 @@ namespace ClaudeCodeGUI.Core
                     StatusChanged?.Invoke(this, status);
                     break;
 
+                case CompactBoundaryEvent compact:
+                    CompactBoundary?.Invoke(this, compact);
+                    break;
+
+                case ModelFallbackEvent fallback:
+                    ModelFallback?.Invoke(this, fallback);
+                    break;
+
                 case MessageStartEvent start:
                     MessageStarted?.Invoke(this, start);
+                    break;
+
+                case MessageStopEvent:
+                    // Intentional no-op: same precedent as ContentBlockStopEvent/BlockStopped below
+                    // (raised but never subscribed to) - nothing downstream needs a finalization
+                    // signal, since text/thinking blocks re-render live off deltas and there's no
+                    // IsStreaming/IsComplete concept anywhere in the view models.
                     break;
 
                 case ContentBlockStartEvent blockStart:
@@ -360,6 +747,20 @@ namespace ClaudeCodeGUI.Core
 
                 case AskUserQuestionEvent askQuestion:
                     AskUserQuestionRequested?.Invoke(this, askQuestion);
+                    break;
+
+                case RateLimitEvent rateLimit:
+                    RateLimitUpdated?.Invoke(this, rateLimit);
+                    break;
+
+                case ControlResponseEvent controlResponse:
+                    TaskCompletionSource<ControlResponseEvent>? pending;
+                    lock (_pendingControlResponses)
+                    {
+                        _pendingControlResponses.TryGetValue(controlResponse.RequestId, out pending);
+                    }
+                    pending?.TrySetResult(controlResponse);
+                    ControlResponseReceived?.Invoke(this, controlResponse);
                     break;
             }
         }
