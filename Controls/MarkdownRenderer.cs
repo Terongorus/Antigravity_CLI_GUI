@@ -129,12 +129,31 @@ namespace TeronClaudeCodeVS.Controls
 
             try
             {
-                string xaml = Markdig.Wpf.Markdown.ToXaml(markdown, Pipeline);
+                // Real Markdig.Wpf.Signed 0.5.0.1 bug, confirmed by disassembling the library's IL
+                // directly (ildasm, not guessed) 2026-09-06: Markdown.ToXaml() renders through
+                // Markdig.Renderers.XamlRenderer, whose object-renderer list registers
+                // CodeBlock/List/Heading/HtmlBlock/Paragraph/QuoteBlock/ThematicBreak plus inlines
+                // but never a table renderer at all - a pipe table just falls through to being
+                // walked cell-by-cell as bare Paragraphs, with no Table/TableRow/TableCell wrapper,
+                // which is why a real pipe table (confirmed live 2026-09-06 in a Task subagent's
+                // own final report) rendered as flattened plain text instead of a table. The
+                // sibling Markdig.Renderers.WpfRenderer DOES register a real
+                // Markdig.Renderers.Wpf.Extensions.TableRenderer - it's what Markdown.ToFlowDocument()
+                // (and Markdig.Wpf's own MarkdownViewer control) use instead of ToXaml(), building
+                // the FlowDocument object tree directly with no XAML string round-trip at all.
+                //
+                // Even with that fixed, a second real gap remained, confirmed with minimal probes
+                // the same day: Markdig's own pipe-table extension does not let a table interrupt
+                // an in-progress paragraph - "Intro.\n| a | b |\n|---|---|\n" (one newline, no blank
+                // line) parses as one plain paragraph with zero Table blocks, while the identical
+                // table alone or after a blank line parses correctly. Models very commonly write a
+                // table directly under a lead-in line with no blank line between them (the exact
+                // shape of the real report that surfaced this), so this can't be left as "just
+                // write it differently" - EnsureBlankLineBeforeTables inserts the blank line Markdig
+                // needs before any header row immediately followed by a delimiter row.
+                string normalized = EnsureBlankLineBeforeTables(markdown);
 
-                using StringReader reader = new(xaml);
-                using XmlReader xml = System.Xml.XmlReader.Create(reader);
-
-                FlowDocument doc = (FlowDocument)XamlReader.Load(xml);
+                FlowDocument doc = Markdig.Wpf.Markdown.ToFlowDocument(normalized, Pipeline);
 
                 // FlowDocument defaults to a fixed ~768px column width meant for paginated
                 // documents; without this, content gets clipped inside a narrow tool window.
@@ -146,7 +165,7 @@ namespace TeronClaudeCodeVS.Controls
                 // discarded the AST (language info strings included) by the time it produced plain
                 // WPF TextElements above. CodeBlock (FencedCodeBlock's base) also covers a 4-space
                 // indented block, which carries no Info string - same as an unrecognized language.
-                Markdig.Syntax.MarkdownDocument ast = Markdig.Markdown.Parse(markdown, Pipeline);
+                Markdig.Syntax.MarkdownDocument ast = Markdig.Markdown.Parse(normalized, Pipeline);
                 var codeBlocks = Markdig.Syntax.MarkdownObjectExtensions.Descendants<Markdig.Syntax.CodeBlock>(ast);
                 foreach (Markdig.Syntax.CodeBlock codeBlock in codeBlocks)
                     ctx.Languages.Enqueue((codeBlock as Markdig.Syntax.FencedCodeBlock)?.Info);
@@ -161,6 +180,49 @@ namespace TeronClaudeCodeVS.Controls
                 doc.Blocks.Add(new Paragraph(new Run(markdown)));
                 return doc;
             }
+        }
+
+        /// <summary>
+        /// Inserts a blank line before any table header row that isn't already preceded by one -
+        /// see the call site's comment for why this is needed at all. A line is treated as a
+        /// delimiter row (and the line above it as that table's header) when it contains only
+        /// <c>-</c>, <c>:</c>, <c>|</c> and whitespace, with at least one of each of the first two -
+        /// deliberately not a regex anchored to a fixed column count, since a real delimiter row's
+        /// cell count doesn't have to match a hand-verified pattern here, only Markdig's own parser
+        /// has to agree it's a table afterward.
+        /// </summary>
+        private static string EnsureBlankLineBeforeTables(string markdown)
+        {
+            string[] lines = markdown.Replace("\r\n", "\n").Split('\n');
+            List<string> result = new(lines.Length + 4);
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                bool nextLineIsDelimiterRow = i + 1 < lines.Length && LooksLikeTableDelimiterRow(lines[i + 1]);
+                bool precedingLineIsBlankOrAbsent = result.Count == 0 || result[result.Count - 1].Trim().Length == 0;
+
+                if (nextLineIsDelimiterRow && lines[i].Contains('|') && !precedingLineIsBlankOrAbsent)
+                    result.Add("");
+
+                result.Add(lines[i]);
+            }
+
+            return string.Join("\n", result);
+        }
+
+        private static bool LooksLikeTableDelimiterRow(string line)
+        {
+            string trimmed = line.Trim();
+            if (trimmed.Length == 0) return false;
+
+            bool hasDash = false, hasPipe = false;
+            foreach (char c in trimmed)
+            {
+                if (c == '-') hasDash = true;
+                else if (c == '|') hasPipe = true;
+                else if (c != ':' && c != ' ' && c != '\t') return false;
+            }
+            return hasDash && hasPipe;
         }
 
         // ─── Post-processing ──────────────────────────────────────────────────────
@@ -239,18 +301,42 @@ namespace TeronClaudeCodeVS.Controls
                     blocks.InsertBefore(codePara, section);
                     blocks.Remove(codePara);
 
-                    // Painted with the exact same brush as the Section around it, not cleared to
-                    // fall through to it - found live 2026-09-06 still showing Markdig.Wpf's own
-                    // light default even after this same brush visibly took effect on the header
-                    // (a plain Border built fresh, nowhere near Markdig.Wpf's renderer). Whatever
-                    // "cleared" was actually resolving to for this specific paragraph, painting it
-                    // explicitly removes the ambiguity instead of relying on it.
-                    codePara.Background = GetCodeBlockBackground();
-                    codePara.BorderThickness = new Thickness(0);
-                    codePara.Margin = new Thickness(10, 6, 10, 10);
+                    // A FlowDocument Paragraph has no way to opt out of wrapping to the column
+                    // width - reported live 2026-09-06 as long output lines (a search-result path,
+                    // a wide diagnostic) mangling across several visual lines instead of just
+                    // running off the edge behind a scrollbar, the way a real terminal or code
+                    // editor would. Moving the already-colored Inlines (diff/token Runs, reparented
+                    // as-is so their own per-run colors and fonts survive unchanged) into a real
+                    // TextBlock with TextWrapping="NoWrap", hosted inside a horizontally-scrolling
+                    // ScrollViewer, gets that behavior - multi-line content still takes its natural
+                    // vertical space, only individual long LINES scroll instead of wrapping.
+                    TextBlock codeText = new() { TextWrapping = TextWrapping.NoWrap };
+                    List<Inline> codeInlines = [.. codePara.Inlines];
+                    codePara.Inlines.Clear();
+                    foreach (Inline inline in codeInlines)
+                        codeText.Inlines.Add(inline);
+
+                    ScrollViewer codeScroll = new()
+                    {
+                        Content = codeText,
+                        HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                        VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                        // Painted with the exact same brush as the Section around it, not left to
+                        // fall through to it - found live 2026-09-06 still showing Markdig.Wpf's
+                        // own light default even after this same brush visibly took effect on the
+                        // header (a plain Border built fresh, nowhere near Markdig.Wpf's renderer).
+                        // Whatever "cleared" was actually resolving to for this specific paragraph,
+                        // painting it explicitly removes the ambiguity instead of relying on it.
+                        Background = GetCodeBlockBackground(),
+                    };
+
+                    BlockUIContainer codeContainer = new(codeScroll)
+                    {
+                        Margin = new Thickness(10, 6, 10, 10),
+                    };
 
                     section.Blocks.Add(BuildCodeHeader(language, filePath, rawCode));
-                    section.Blocks.Add(codePara);
+                    section.Blocks.Add(codeContainer);
                     continue;
                 }
 
@@ -287,13 +373,22 @@ namespace TeronClaudeCodeVS.Controls
 
                 case Table table:
                     // Same hazard, three levels deep - every level snapshotted for the same reason.
+                    table.BorderThickness = new Thickness(0);
+                    table.CellSpacing = 0;
                     foreach (var rg in table.RowGroups.Cast<TableRowGroup>().ToList())
+                    {
+                        bool isHeaderRow = true; // first row of the table's own header row-group
                         foreach (TableRow row in rg.Rows.Cast<TableRow>().ToList())
+                        {
                             foreach (TableCell cell in row.Cells.Cast<TableCell>().ToList())
                             {
                                 WalkBlocks(cell.Blocks, ctx);
                                 OverrideStyledForeground(cell);
+                                RestyleTableCell(cell, isHeaderRow);
                             }
+                            isHeaderRow = false;
+                        }
+                    }
                     break;
             }
 
@@ -332,6 +427,26 @@ namespace TeronClaudeCodeVS.Controls
 
             element.SetResourceReference(TextElement.ForegroundProperty,
                 Microsoft.VisualStudio.Shell.VsBrushes.ToolWindowTextKey);
+        }
+
+        /// <summary>
+        /// Markdig.Wpf's own Table/TableCell styles hardcode a pure-black BorderBrush
+        /// (<c>#FF000000</c>, confirmed by reading the live Style.Setters directly) meant for a
+        /// plain white page - nearly invisible against a dark VS theme, reported live 2026-09-06
+        /// ("shouldn't the border be visible on dark?"). Every cell also draws its own top+left
+        /// edge while the Table itself draws the right+bottom edge, which together form a full
+        /// black grid box around every cell - replaced here with the same translucent chrome
+        /// border already used for code-block chrome (<see cref="s_codeBorderBrush"/>, for visual
+        /// consistency) and a horizontal-only-separator look (bottom edge only, no verticals),
+        /// which reads lighter and more like a real chat table than a spreadsheet grid. The header
+        /// row's separator is drawn twice as thick to set it apart from the body without needing a
+        /// second color.
+        /// </summary>
+        private static void RestyleTableCell(TableCell cell, bool isHeaderRow)
+        {
+            cell.BorderBrush = s_codeBorderBrush;
+            cell.BorderThickness = new Thickness(0, 0, 0, isHeaderRow ? 2 : 1);
+            cell.Padding = new Thickness(8, 4, 8, 4);
         }
 
         private static void FixupParagraph(Paragraph para)

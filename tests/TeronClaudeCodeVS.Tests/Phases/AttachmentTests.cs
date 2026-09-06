@@ -30,6 +30,97 @@ namespace TeronClaudeCodeVS.Tests.Phases
 
         // ─── Paste (A1) ─────────────────────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Real bug found live 2026-09-06: pasting a real screenshot did nothing at all, and the
+        /// right-click context menu's own "Paste" item was visibly greyed out. Root-caused with a
+        /// direct probe: <c>ApplicationCommands.Paste.CanExecute(null, InputBox)</c> returns false
+        /// whenever the real clipboard holds ONLY an image, because <c>TextBoxBase</c>'s built-in
+        /// Paste command is gated on text-compatible formats only - so Ctrl+V and the menu item
+        /// never even reached <c>OnInputBoxPasting</c>'s <c>DataObject.Pasting</c> handler, whose own
+        /// image-detection logic (the "PNG"-format fix above) was correct but unreachable.
+        /// <see cref="ChatControl.Create"/>'s control wires an instance <c>CommandBinding</c> that
+        /// widens <c>CanExecute</c> to also allow an image, and handles it directly in
+        /// <c>Executed</c> rather than delegating to <c>InputBox.Paste()</c> - a second real finding
+        /// along the way was that <c>TextBoxBase.Paste()</c> itself only ever surfaces TEXT formats
+        /// through <c>DataObject.Pasting</c>, never image ones, so delegating to it for an image
+        /// would have silently done nothing even with the gate fixed.
+        /// <para>
+        /// This test touches the REAL OS clipboard (unlike every other test in this file, which
+        /// builds a synthetic <see cref="DataObject"/>) because the bug is in
+        /// <c>ApplicationCommands.Paste</c>'s own command-routing gate, which only exists for the
+        /// real system clipboard - a fabricated <see cref="DataObjectPastingEventArgs"/> bypasses
+        /// that gate entirely and could not have caught this. The developer's actual clipboard
+        /// content is saved and restored around the mutation.
+        /// </para>
+        /// </summary>
+        [Fact]
+        public void The_real_Paste_command_stages_an_image_from_the_actual_clipboard()
+        {
+            Sta.Run(() =>
+            {
+                IDataObject? original = null;
+                try { original = Clipboard.GetDataObject(); } catch { }
+
+                try
+                {
+                    SetClipboardWithRetry(() => Clipboard.SetImage(ScratchFiles.SolidBitmap(64, 64)));
+
+                    var harness = ChatControl.Create();
+
+                    Assert.True(
+                        System.Windows.Input.ApplicationCommands.Paste.CanExecute(null, harness.Control.InputBox),
+                        "Paste command must be enabled when the clipboard holds an image, not just text");
+
+                    System.Windows.Input.ApplicationCommands.Paste.Execute(null, harness.Control.InputBox);
+
+                    Assert.Equal(64, Assert.Single(harness.Vm.PendingImages).Thumbnail.PixelWidth);
+                }
+                finally
+                {
+                    if (original != null)
+                    {
+                        try { Clipboard.SetDataObject(original, true); } catch { }
+                    }
+                }
+            });
+        }
+
+        /// <summary>
+        /// The positive control for the test above: with only text on the clipboard, the real
+        /// Paste command must still insert it into the TextBox as before - the CommandBinding added
+        /// to widen the gate for images must not break plain text paste.
+        /// </summary>
+        [Fact]
+        public void The_real_Paste_command_still_pastes_plain_text()
+        {
+            Sta.Run(() =>
+            {
+                IDataObject? original = null;
+                try { original = Clipboard.GetDataObject(); } catch { }
+
+                try
+                {
+                    SetClipboardWithRetry(() => Clipboard.SetText("hello from the real clipboard"));
+
+                    var harness = ChatControl.Create();
+                    harness.Control.InputBox.Text = "";
+
+                    Assert.True(System.Windows.Input.ApplicationCommands.Paste.CanExecute(null, harness.Control.InputBox));
+                    System.Windows.Input.ApplicationCommands.Paste.Execute(null, harness.Control.InputBox);
+
+                    Assert.Equal("hello from the real clipboard", harness.Control.InputBox.Text);
+                    Assert.Empty(harness.Vm.PendingImages);
+                }
+                finally
+                {
+                    if (original != null)
+                    {
+                        try { Clipboard.SetDataObject(original, true); } catch { }
+                    }
+                }
+            });
+        }
+
         [Fact]
         public void Pasting_an_image_stages_a_chip_and_swallows_the_paste()
         {
@@ -318,6 +409,30 @@ namespace TeronClaudeCodeVS.Tests.Phases
         // ─── helpers ────────────────────────────────────────────────────────────────────────────
 
         private static DataObject FileDrop(params string[] paths) => new DataObject(DataFormats.FileDrop, paths);
+
+        /// <summary>
+        /// The real OS clipboard can transiently refuse <c>OpenClipboard</c>
+        /// (<c>CLIPBRD_E_CANT_OPEN</c>) whenever another process - Windows' own clipboard history
+        /// service is a common culprit - briefly holds it open, found live 2026-09-06 as a one-off
+        /// failure in a full-suite run that passed cleanly in isolation. A short retry is the
+        /// standard mitigation for this well-known Windows quirk, not a sign these tests are
+        /// fundamentally unreliable.
+        /// </summary>
+        private static void SetClipboardWithRetry(Action setClipboard)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    setClipboard();
+                    return;
+                }
+                catch (System.Runtime.InteropServices.COMException) when (attempt < 20)
+                {
+                    System.Threading.Thread.Sleep(100);
+                }
+            }
+        }
 
         private static void Drop(ChatControl harness, IDataObject data) =>
             WpfInput.RaiseDrag(harness.Control.InputAreaBorder, UIElement.DropEvent, data);

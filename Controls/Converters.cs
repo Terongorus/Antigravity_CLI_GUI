@@ -115,16 +115,6 @@ namespace TeronClaudeCodeVS.Controls
             => throw new NotSupportedException();
     }
 
-    /// <summary>TranscriptViewMode -> Visibility, Collapsed only for Summary - hides thinking blocks entirely in Summary mode (as opposed to Normal, where they're merely collapsed but still present).</summary>
-    public sealed class HiddenInSummaryModeConverter : IValueConverter
-    {
-        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
-            => value is TranscriptViewMode.Summary ? Visibility.Collapsed : Visibility.Visible;
-
-        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
-            => throw new NotSupportedException();
-    }
-
     /// <summary>(bool HasDetail, TranscriptViewMode mode) -> bool. A tool-call card's expand affordance is disabled entirely in Summary mode, even if it has detail to show.</summary>
     public sealed class ToolCallExpandableConverter : IMultiValueConverter
     {
@@ -133,6 +123,27 @@ namespace TeronClaudeCodeVS.Controls
             bool hasDetail = values.Length > 0 && values[0] is true;
             bool isSummaryMode = values.Length > 1 && values[1] is TranscriptViewMode.Summary;
             return hasDetail && !isSummaryMode;
+        }
+
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)
+            => throw new NotSupportedException();
+    }
+
+    /// <summary>
+    /// (bool HasContent, TranscriptViewMode mode) -> Visibility. A "Thinking" card is hidden
+    /// entirely, in every transcript mode, once it has no content - the CLI's extended-thinking
+    /// API can return an empty thinking block (real signature, no text) for a round that simply
+    /// didn't produce visible reasoning, and an Expander that reveals nothing when opened is worse
+    /// than not showing it at all. Still hidden in Summary mode regardless of content, same as
+    /// before.
+    /// </summary>
+    public sealed class ThinkingVisibleConverter : IMultiValueConverter
+    {
+        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+        {
+            bool hasContent = values.Length > 0 && values[0] is true;
+            bool isSummaryMode = values.Length > 1 && values[1] is TranscriptViewMode.Summary;
+            return hasContent && !isSummaryMode ? Visibility.Visible : Visibility.Collapsed;
         }
 
         public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture)

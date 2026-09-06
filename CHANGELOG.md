@@ -3,6 +3,38 @@
 All notable changes to the **Claude Code for Visual Studio** extension will be documented in
 this file.
 
+## [0.7.1] - 2026-09-06
+
+Live bug-fixing round, mostly bugs found while dogfooding across two different projects in the
+same day.
+
+* **Fixed pasting a real screenshot doing nothing at all**, with the right-click "Paste" menu
+  item visibly greyed out. The clipboard-format fix alone wasn't enough: WPF's TextBox disables
+  its own Paste command entirely whenever the clipboard holds only an image, so Ctrl+V and the
+  menu item never even reached the paste handler. Also fixed the underlying format-detection gap
+  that caused it in the first place - many real screenshot/browser sources only synthesize the
+  classic clipboard bitmap format, which silently fails once the source app is gone; the real
+  "PNG" format is now read directly instead.
+* **Fixed dragging an image into the chat box also opening it in Visual Studio's own Image
+  Editor** and stealing focus (flipping a docked Properties tab to the front if one shares that
+  slot) - the drop event wasn't marked handled, so it kept bubbling past the chat control into
+  VS's own shell-level drop handling.
+* **Fixed markdown tables rendering as raw pipe-and-dash source text** instead of an actual
+  table. Two stacked causes: the rendering library's XAML-string API has no table support at all
+  (switched to its native FlowDocument API, which does), and its table parser doesn't let a table
+  interrupt an in-progress paragraph - very common when a reply leads with a bold intro line
+  directly above the table with no blank line between them, now handled automatically.
+* **Fixed table borders being invisible on a dark theme** (a hardcoded black default meant for a
+  plain white page) and switched from a full grid box to a lighter, horizontal-only separator
+  look with a heavier header underline.
+* **Fixed "Thinking" sections that expand to reveal nothing.** The CLI's extended-thinking API
+  can return a thinking block that's empty except for a signature, for a round that simply didn't
+  produce visible reasoning - those are now hidden entirely instead of showing an openable-but-
+  empty card.
+* **Long command/output text in a tool-call card no longer wraps** across several lines - it now
+  stays on one line with a horizontal scrollbar, the way a real terminal or code editor would
+  show it, so long paths and wide diagnostics stay readable.
+
 ## [0.7.0] - 2026-09-06
 
 First stable release since the 0.6.x beta series - a large batch of fixes and a few new

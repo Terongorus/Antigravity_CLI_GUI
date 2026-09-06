@@ -54,6 +54,45 @@ namespace TeronClaudeCodeVS.Core
             _vm.PermissionRequestAdded += OnPermissionRequestAdded;
             _vm.PlanFileReadyToOpen += OnPlanFileReadyToOpen;
             _vm.InputPrefillRequested += OnInputPrefillRequested;
+
+            // Real bug found live 2026-09-06: pasting a real screenshot did nothing, and the
+            // right-click context menu's own "Paste" item was visibly greyed out - confirmed via a
+            // direct probe that ApplicationCommands.Paste.CanExecute(null, InputBox) returns false
+            // whenever the clipboard holds ONLY an image. TextBoxBase's built-in Paste command is
+            // gated on text-compatible clipboard formats only (it has no concept of an embedded
+            // image), so Ctrl+V/the menu item never even reach OnInputBoxPasting's DataObject.Pasting
+            // handler at all - that handler's own image logic was correct but unreachable. This
+            // instance CommandBinding overrides the gate to also allow an image/file clipboard, then
+            // calls InputBox.Paste() directly (bypassing the disabled command routing) so the
+            // existing DataObject.Pasting-based handling still does the real work unchanged.
+            InputBox.CommandBindings.Add(new CommandBinding(
+                ApplicationCommands.Paste, OnPasteExecuted, OnPasteCanExecute));
+        }
+
+        private void OnPasteCanExecute(object sender, CanExecuteRoutedEventArgs e)
+        {
+            IDataObject? data = null;
+            try { data = Clipboard.GetDataObject(); } catch { /* another app may be holding the clipboard open */ }
+
+            e.CanExecute = data != null && (
+                data.GetDataPresent(DataFormats.UnicodeText) || data.GetDataPresent(DataFormats.Text) ||
+                data.GetDataPresent(DataFormats.Bitmap) || data.GetDataPresent("PNG") ||
+                data.GetDataPresent(DataFormats.FileDrop));
+            e.Handled = true;
+        }
+
+        private void OnPasteExecuted(object sender, ExecutedRoutedEventArgs e)
+        {
+            IDataObject? data = null;
+            try { data = Clipboard.GetDataObject(); } catch { /* another app may be holding the clipboard open */ }
+
+            // TextBoxBase.Paste() only ever surfaces text formats through DataObject.Pasting (see
+            // TryHandleImagePaste's own doc comment) - an image has to be handled directly here,
+            // before ever falling through to it for the plain-text case.
+            if (data == null || !TryHandleImagePaste(data))
+                InputBox.Paste();
+
+            e.Handled = true;
         }
 
 #pragma warning disable VSTHRD100
@@ -1417,14 +1456,82 @@ namespace TeronClaudeCodeVS.Core
         // files the same way, via DataTransfer items rather than the WPF-specific event used here.
         private void OnInputBoxPasting(object sender, DataObjectPastingEventArgs e)
         {
-            if (!e.DataObject.GetDataPresent(DataFormats.Bitmap))
-                return;
+            if (TryHandleImagePaste(e.DataObject))
+                e.CancelCommand();
+        }
 
-            if (e.DataObject.GetData(DataFormats.Bitmap) is not BitmapSource bitmap)
-                return;
+        // Real Anthropic Messages API image content-block shape confirmed by reading the official
+        // VS Code extension's webview bundle directly (2026-08-27) - it reads pasted clipboard
+        // files the same way, via DataTransfer items rather than the WPF-specific event used here.
+        //
+        // Shared by both OnInputBoxPasting (a real Ctrl+V routed through TextBoxBase's own Paste
+        // command once OnPasteCanExecute has allowed it) and OnPasteExecuted (which calls this
+        // directly): found live 2026-09-06 that TextBoxBase.Paste() - the direct method, called
+        // from OnPasteExecuted to run the default text-paste behavior once an image isn't present -
+        // only ever surfaces TEXT clipboard formats through DataObject.Pasting, never image ones,
+        // regardless of what's actually on the clipboard. So an image paste has to be detected and
+        // handled here, upfront, before ever falling through to InputBox.Paste().
+        private bool TryHandleImagePaste(IDataObject data)
+        {
+            // Checked before DataFormats.Bitmap (CF_BITMAP): many real screenshot/browser sources
+            // (Snipping Tool, Chrome/Edge "Copy image") place a real "PNG" byte stream on the
+            // clipboard but only synthesize CF_BITMAP/CF_DIB via Windows' delayed-rendering, which
+            // silently fails to resolve once the source app/tab is gone - GetDataPresent(Bitmap)
+            // can read true while GetData(Bitmap) then returns nothing, and the paste was
+            // observed live 2026-09-06 to just do nothing. Reading "PNG" directly sidesteps the
+            // synthesis path entirely.
+            if (TryGetClipboardPngBytes(data, out byte[]? pngBytes, out BitmapImage? pngThumbnail))
+            {
+                _vm.AddPendingImage(Convert.ToBase64String(pngBytes), pngThumbnail!);
+                return true;
+            }
 
-            _vm.AddPendingImage(EncodeBitmapToPngBase64(bitmap), bitmap);
-            e.CancelCommand();
+            if (data.GetDataPresent(DataFormats.Bitmap) && data.GetData(DataFormats.Bitmap) is BitmapSource bitmap)
+            {
+                _vm.AddPendingImage(EncodeBitmapToPngBase64(bitmap), bitmap);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryGetClipboardPngBytes(
+            IDataObject data, out byte[]? pngBytes, out BitmapImage? thumbnail)
+        {
+            pngBytes = null;
+            thumbnail = null;
+
+            if (!data.GetDataPresent("PNG") || data.GetData("PNG") is not MemoryStream stream)
+                return false;
+
+            pngBytes = stream.ToArray();
+            if (pngBytes.Length == 0)
+            {
+                pngBytes = null;
+                return false;
+            }
+
+            try
+            {
+                BitmapImage image = new();
+                using (MemoryStream ms = new(pngBytes))
+                {
+                    image.BeginInit();
+                    image.CacheOption = BitmapCacheOption.OnLoad;
+                    image.StreamSource = ms;
+                    image.EndInit();
+                }
+                image.Freeze();
+                thumbnail = image;
+                return true;
+            }
+            catch (NotSupportedException)
+            {
+                // Malformed/unexpected "PNG" payload - fall through to the Bitmap format instead
+                // of dropping the paste entirely.
+                pngBytes = null;
+                return false;
+            }
         }
 
         private static string EncodeBitmapToPngBase64(BitmapSource bitmap)
@@ -1512,6 +1619,13 @@ namespace TeronClaudeCodeVS.Core
 #pragma warning restore VSTHRD100
         {
             InputAreaBorder.ClearValue(Border.BorderBrushProperty);
+
+            // Without this, an unhandled Drop keeps bubbling past this control and reaches VS's
+            // own shell-level drop handling, which opens a dropped image in the Image Editor and
+            // steals focus (also flipping a docked Properties tab to the front if one shares this
+            // slot) - found live 2026-09-06.
+            if (HasDroppableData(e.Data))
+                e.Handled = true;
 
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
             {

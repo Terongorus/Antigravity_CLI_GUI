@@ -350,21 +350,26 @@ namespace TeronClaudeCodeVS.ViewModels
                     break;
             }
 
-            AppendOutput(sb, output, isError);
+            // The Task subagent's own final report is itself markdown meant to be read formatted
+            // (headings, bold, tables) - unlike every other tool's output, which is raw
+            // program/file text that belongs in a fence. Found live 2026-09-06: fencing it here
+            // made a returned pipe table render as its own literal source instead of an actual
+            // table, since a fenced block is never parsed as markdown.
+            AppendOutput(sb, output, isError, fence: toolName != "Task");
 
             string result = sb.ToString().Trim();
             return result.Length == 0 ? null : result;
         }
 
-        private static void AppendOutput(StringBuilder sb, string? output, bool isError)
+        private static void AppendOutput(StringBuilder sb, string? output, bool isError, bool fence = true)
         {
             if (string.IsNullOrEmpty(output)) return;
 
             if (sb.Length > 0) sb.AppendLine();
             sb.AppendLine(isError ? "**Error:**" : "**Output:**");
-            sb.AppendLine("````");
+            if (fence) sb.AppendLine("````");
             sb.AppendLine(TruncateBlock(output!, 4000));
-            sb.AppendLine("````");
+            if (fence) sb.AppendLine("````");
         }
 
         private static string? S(JObject? o, string key) => o?.Value<string>(key);
