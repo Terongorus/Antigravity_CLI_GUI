@@ -266,7 +266,7 @@ namespace TeronClaudeCodeVS.Tests.Phases
             Skip.Unless(Directory.Exists(projectDir),
                 $"No CLI transcripts at {projectDir} - this reads history left behind by an earlier live session.");
 
-            (string sessionId, string editId, string writeId)? found = FindSessionWithBothTools(projectDir);
+            (string sessionId, string editId, string writeId)? found = FindSessionWithBothTools(projectDir, scratch);
 
             Skip.Unless(found.HasValue,
                 "No transcript in that folder contains both an Edit and a Write, which is what this test compares.");
@@ -304,8 +304,13 @@ namespace TeronClaudeCodeVS.Tests.Phases
                 "whatever.txt"));
         }
 
-        private static (string sessionId, string editId, string writeId)? FindSessionWithBothTools(string projectDir)
+        private static (string sessionId, string editId, string writeId)? FindSessionWithBothTools(string projectDir, string targetFile)
         {
+            // Must match on the target FILE, not just "any Edit + any Write in the same
+            // transcript" - found live 2026-09-06 that a same-day live-testing session (unrelated
+            // Edit/Write calls against other files, newer than this fixture's own session) was
+            // shadowing the intended fixture under OrderByDescending(LastWriteTimeUtc) alone,
+            // since ordinary coding sessions almost always contain both tool names somewhere.
             IEnumerable<FileInfo> transcripts = new DirectoryInfo(projectDir)
                 .GetFiles("*.jsonl")
                 .OrderByDescending(f => f.LastWriteTimeUtc);
@@ -333,6 +338,10 @@ namespace TeronClaudeCodeVS.Tests.Phases
                             continue;
 
                         string? name = (string?)block["name"];
+                        string? filePath = (string?)block["input"]?["file_path"];
+                        if (!string.Equals(filePath, targetFile, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
                         if (name == "Edit") editId ??= (string?)block["id"];
                         if (name == "Write") writeId ??= (string?)block["id"];
                     }
