@@ -75,8 +75,8 @@
         <controls:CountToVisibilityConverter x:Key="CountToVisibilityConverter"/>
         <controls:ToolStatusToBrushConverter x:Key="ToolStatusToBrushConverter"/>
         <controls:EqualityToVisibilityConverter x:Key="EqualityToVisibilityConverter"/>
-        <controls:HiddenInSummaryModeConverter x:Key="HiddenInSummaryModeConverter"/>
         <controls:ToolCallExpandableConverter x:Key="ToolCallExpandableConverter"/>
+        <controls:ThinkingVisibleConverter x:Key="ThinkingVisibleConverter"/>
         <controls:StatusLineConverter x:Key="StatusLineConverter"/>
         <controls:FilePathToNameConverter x:Key="FilePathToNameConverter"/>
         <controls:FilePathToDirConverter x:Key="FilePathToDirConverter"/>
@@ -634,10 +634,14 @@
         <DataTemplate x:Key="ThinkingBlockTemplate" DataType="{x:Type vm:ThinkingBlockViewModel}">
             <Expander IsExpanded="{Binding IsExpanded}" Margin="0,2,0,2" Opacity="0.75"
                       Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"
-                      Expanded="OnCardExpanderToggled" Collapsed="OnCardExpanderToggled"
-                      Visibility="{Binding DataContext.CurrentTranscriptMode.Value,
-                                   RelativeSource={RelativeSource AncestorType=ItemsControl, AncestorLevel=2},
-                                   Converter={StaticResource HiddenInSummaryModeConverter}}">
+                      Expanded="OnCardExpanderToggled" Collapsed="OnCardExpanderToggled">
+                <Expander.Visibility>
+                    <MultiBinding Converter="{StaticResource ThinkingVisibleConverter}">
+                        <Binding Path="HasContent"/>
+                        <Binding Path="DataContext.CurrentTranscriptMode.Value"
+                                 RelativeSource="{RelativeSource AncestorType=ItemsControl, AncestorLevel=2}"/>
+                    </MultiBinding>
+                </Expander.Visibility>
                 <Expander.Header>
                     <TextBlock Text="Thinking" FontStyle="Italic" FontSize="{StaticResource FontSizeBody}"
                                Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"/>

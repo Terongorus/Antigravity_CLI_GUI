@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
@@ -95,19 +96,21 @@ namespace TeronClaudeCodeVS.Tests.Phases
                 Assert.Single(colors); // both blocks got the same chrome brush, not one fixed and one left raw
                 Assert.NotEqual(Color.FromArgb(0xFF, 0xD3, 0xD3, 0xD3), colors[0]); // not Markdig.Wpf's raw default
 
-                // Each section is header paragraph + content paragraph.
+                // Each section is header + content (a BlockUIContainer hosting a horizontally-
+                // scrolling ScrollViewer around the code text - see MarkdownRenderer's own comment
+                // on why a plain Paragraph can't do that).
                 Assert.All(codeSections, s => Assert.Equal(2, s.Blocks.Count));
 
                 // Found live 2026-09-06: the Section's own Background matched, but the content
-                // Paragraph inside it (Blocks[1]) was left on Markdig.Wpf's own light default -
-                // ClearValue on it did not reliably fall through to showing the Section's fill
-                // underneath, so the body read as a light box under a correctly-dark header. The
-                // content paragraph must carry the exact same brush as its Section, not merely a
-                // cleared/absent one.
+                // underneath it was left on Markdig.Wpf's own light default - ClearValue on it did
+                // not reliably fall through to showing the Section's fill underneath, so the body
+                // read as a light box under a correctly-dark header. The content must carry the
+                // exact same brush as its Section, not merely a cleared/absent one.
                 Assert.All(codeSections, s =>
                 {
-                    var contentPara = Assert.IsType<Paragraph>(s.Blocks.ElementAt(1));
-                    Assert.Equal(((SolidColorBrush)s.Background).Color, ((SolidColorBrush)contentPara.Background).Color);
+                    var container = Assert.IsType<BlockUIContainer>(s.Blocks.ElementAt(1));
+                    var scrollViewer = Assert.IsType<ScrollViewer>(container.Child);
+                    Assert.Equal(((SolidColorBrush)s.Background).Color, ((SolidColorBrush)scrollViewer.Background).Color);
                 });
             });
         }
@@ -221,12 +224,133 @@ namespace TeronClaudeCodeVS.Tests.Phases
                 FlowDocument doc = MarkdownRenderer.Render("```csharp\nreturn \"hi\";\n```");
 
                 Section section = Assert.Single(FindCodeSections(doc));
-                Paragraph content = Assert.IsType<Paragraph>(section.Blocks.LastBlock);
+                BlockUIContainer container = Assert.IsType<BlockUIContainer>(section.Blocks.LastBlock);
+                TextBlock content = Assert.IsType<TextBlock>(Assert.IsType<ScrollViewer>(container.Child).Content);
 
                 var runs = content.Inlines.OfType<Run>().Select(r => r.Text).ToList();
                 Assert.Contains("return", runs);
                 Assert.Contains("\"hi\"", runs);
                 Assert.True(runs.Count > 1); // one big flat Run would mean tokenizing didn't run at all
+            });
+        }
+
+        /// <summary>
+        /// Real bug found live 2026-09-06: a pipe table in a plain assistant reply (a Task
+        /// subagent's own final report, in the case that surfaced it) rendered as its own raw
+        /// source text - literal pipes and dashes - instead of an actual table. Root-caused by
+        /// disassembling Markdig.Wpf.Signed 0.5.0.1's IL directly (ildasm, not guessed):
+        /// <c>Markdown.ToXaml()</c> (what <see cref="MarkdownRenderer.Render(string,string?)"/> used
+        /// to call) renders through <c>Markdig.Renderers.XamlRenderer</c>, whose registered
+        /// object-renderer list never includes a table renderer at all, so a Table AST node just
+        /// gets walked cell-by-cell as bare Paragraphs with the separator row silently dropped -
+        /// confirmed with a minimal 2-row table producing 4 top-level Paragraph blocks and no
+        /// Table. The sibling <c>Markdig.Renderers.WpfRenderer</c>, used by <c>ToFlowDocument()</c>
+        /// (the API Markdig.Wpf's own <c>MarkdownViewer</c> control uses), DOES register a real
+        /// table renderer - switching to it fixed this with no XAML string round-trip needed.
+        /// </summary>
+        [Fact]
+        public void A_pipe_table_renders_as_a_real_table_not_raw_text()
+        {
+            Sta.Run(() =>
+            {
+                string markdown = "| # | Title |\n|---|---|\n| 22 | Foo |\n| 23 | Bar |\n";
+
+                FlowDocument doc = MarkdownRenderer.Render(markdown);
+
+                Table table = Assert.Single(doc.Blocks.OfType<Table>());
+                TableRowGroup rowGroup = Assert.Single(table.RowGroups);
+                Assert.Equal(3, rowGroup.Rows.Count); // header + 2 data rows - the separator row is structural, not a row
+
+                string headerText = new TextRange(rowGroup.Rows[0].ContentStart, rowGroup.Rows[0].ContentEnd).Text;
+                Assert.Contains("#", headerText);
+                Assert.Contains("Title", headerText);
+
+                string firstDataRowText = new TextRange(rowGroup.Rows[1].ContentStart, rowGroup.Rows[1].ContentEnd).Text;
+                Assert.Contains("22", firstDataRowText);
+                Assert.Contains("Foo", firstDataRowText);
+            });
+        }
+
+        /// <summary>
+        /// A pipe table immediately following a text line with no blank line between them - the
+        /// exact shape of the real report that surfaced <see cref="A_pipe_table_renders_as_a_real_table_not_raw_text"/>
+        /// ("**Close outright...:**" directly followed by the table's header row). A second real
+        /// gap beyond the renderer-registration one above: Markdig's own pipe-table extension does
+        /// not let a table interrupt an in-progress paragraph, confirmed with a minimal probe
+        /// producing zero Table blocks for "Intro.\n| a | b |\n|---|---|\n" while the same table
+        /// alone or after a blank line parsed fine. Models write tables directly under a lead-in
+        /// line like this very commonly, so <see cref="MarkdownRenderer"/> now inserts the blank
+        /// line Markdig needs (<c>EnsureBlankLineBeforeTables</c>) rather than requiring the source
+        /// text to always add one.
+        /// </summary>
+        [Fact]
+        public void A_pipe_table_renders_correctly_even_directly_after_a_text_line_with_no_blank_line()
+        {
+            Sta.Run(() =>
+            {
+                string markdown =
+                    "**Close outright:**\n" +
+                    "| # | Title |\n" +
+                    "|---|---|\n" +
+                    "| 22 | Foo |\n";
+
+                FlowDocument doc = MarkdownRenderer.Render(markdown);
+
+                Assert.Single(doc.Blocks.OfType<Table>());
+            });
+        }
+
+        /// <summary>
+        /// Real bug found live 2026-09-06, reported right after the table-rendering fix landed:
+        /// once tables actually rendered, Markdig.Wpf's own default Table/TableCell styles turned
+        /// out to hardcode a pure-black <c>BorderBrush</c> (<c>#FF000000</c>, confirmed by reading
+        /// the live <c>Style.Setters</c> directly) - authored for a plain white page, nearly
+        /// invisible against a dark VS theme. <see cref="MarkdownRenderer.RestyleTableCell"/> now
+        /// overrides every cell's border to the same translucent chrome brush already used for
+        /// code-block borders elsewhere in this renderer, and switches from a full grid (every cell
+        /// bordered on all 4 sides) to a horizontal-only separator look with a heavier header
+        /// underline.
+        /// </summary>
+        [Fact]
+        public void A_table_cells_border_is_not_markdig_wpfs_invisible_black_default()
+        {
+            Sta.Run(() =>
+            {
+                string markdown = "| # | Title |\n|---|---|\n| 22 | Foo |\n";
+                FlowDocument doc = MarkdownRenderer.Render(markdown);
+                Table table = Assert.Single(doc.Blocks.OfType<Table>());
+
+                TableCell headerCell = table.RowGroups[0].Rows[0].Cells[0];
+                TableCell dataCell = table.RowGroups[0].Rows[1].Cells[0];
+
+                Color headerBorderColor = Assert.IsType<SolidColorBrush>(headerCell.BorderBrush).Color;
+                Color dataBorderColor = Assert.IsType<SolidColorBrush>(dataCell.BorderBrush).Color;
+
+                Assert.NotEqual(Color.FromArgb(0xFF, 0, 0, 0), headerBorderColor); // not Markdig.Wpf's opaque black default
+                Assert.NotEqual(Color.FromArgb(0xFF, 0, 0, 0), dataBorderColor);
+
+                // The header row's own separator is heavier than a data row's, so it reads as
+                // distinct from the body without needing a second color.
+                Assert.True(headerCell.BorderThickness.Bottom > dataCell.BorderThickness.Bottom);
+            });
+        }
+
+        /// <summary>
+        /// A plain thematic break ("---" alone, no pipes) must not be mistaken for a table
+        /// delimiter row by <c>EnsureBlankLineBeforeTables</c>'s line-scanning heuristic - it would
+        /// otherwise inject a spurious blank line above whatever text precedes a horizontal rule.
+        /// </summary>
+        [Fact]
+        public void A_thematic_break_is_not_mistaken_for_a_table_delimiter_row()
+        {
+            Sta.Run(() =>
+            {
+                FlowDocument doc = MarkdownRenderer.Render("Some text\n\n---\n\nMore text");
+
+                Assert.Empty(doc.Blocks.OfType<Table>());
+                string wholeText = new TextRange(doc.ContentStart, doc.ContentEnd).Text;
+                Assert.Contains("Some text", wholeText);
+                Assert.Contains("More text", wholeText);
             });
         }
 
@@ -257,7 +381,8 @@ namespace TeronClaudeCodeVS.Tests.Phases
                 FlowDocument doc = MarkdownRenderer.Render(markdown);
 
                 Section section = Assert.Single(FindCodeSections(doc));
-                Paragraph content = Assert.IsType<Paragraph>(section.Blocks.LastBlock);
+                BlockUIContainer container = Assert.IsType<BlockUIContainer>(section.Blocks.LastBlock);
+                TextBlock content = Assert.IsType<TextBlock>(Assert.IsType<ScrollViewer>(container.Child).Content);
 
                 var addRun = content.Inlines.OfType<Run>().First(r => r.Text.StartsWith("+"));
                 var remRun = content.Inlines.OfType<Run>().First(r => r.Text.StartsWith("-"));

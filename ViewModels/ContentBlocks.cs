@@ -132,11 +132,25 @@ namespace TeronClaudeCodeVS.ViewModels
             set
             {
                 if (SetField(ref _text, value))
+                {
                     OnPropertyChanged(nameof(Document));
+                    OnPropertyChanged(nameof(HasContent));
+                }
             }
         }
 
         public FlowDocument Document => MarkdownRenderer.Render(_text);
+
+        /// <summary>
+        /// Real bug found live 2026-09-06: the CLI's own extended-thinking API can return a
+        /// content block of type "thinking" with an empty string and only a cryptographic
+        /// signature (confirmed directly in a real captured transcript: <c>"thinking":""</c>,
+        /// non-empty <c>"signature"</c>) - a real round that simply didn't produce any visible
+        /// reasoning, not a dropped delta. Every one of those still got its own "Thinking" Expander
+        /// in the transcript that revealed nothing when opened. Used to hide the whole card rather
+        /// than just leaving it disabled, since there is nothing to show either way.
+        /// </summary>
+        public bool HasContent => !string.IsNullOrWhiteSpace(_text);
 
         private bool _isExpanded;
         public bool IsExpanded
