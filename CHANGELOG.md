@@ -3,6 +3,17 @@
 All notable changes to the **Claude Code for Visual Studio** extension will be documented in
 this file.
 
+## [0.7.3] - 2026-09-09
+
+* **Fixed self-update never detecting a newer version — both the automatic check and the manual
+  "Check for Updates" command silently did nothing, always.** The version comparison used this
+  extension's own assembly version, which is fixed at 1.0.0.0 (this project's build sets none of
+  its own) regardless of the actual shipped release. It now reads the real installed version from
+  the extension's own manifest instead, so a genuine new release is detected correctly.
+* **"Check for Updates" now tells you something happened even when there's nothing to install** -
+  a confirmation when you're already up to date, and a message if the check itself couldn't
+  complete (e.g. no network). The passive background check stays silent either way, by design.
+
 ## [0.7.2] - 2026-09-08
 
 Another live bug-fixing round, this time centered on the context-usage indicator, session-resume
