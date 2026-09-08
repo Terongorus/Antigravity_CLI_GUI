@@ -9,6 +9,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -330,6 +331,13 @@ namespace TeronClaudeCodeVS.Controls
                         Background = GetCodeBlockBackground(),
                     };
 
+                    // WPF's ScrollViewer has no built-in Shift+wheel-scrolls-horizontally behavior
+                    // (that convention has to be coded explicitly). Handled at Preview (tunnel) time
+                    // so it lands before the ScrollViewer's own bubble-phase MouseWheel handling
+                    // would otherwise treat it as a (no-op, since vertical scrolling is disabled
+                    // here) vertical wheel tick and mark it handled first.
+                    codeScroll.PreviewMouseWheel += OnCodeScrollPreviewMouseWheel;
+
                     BlockUIContainer codeContainer = new(codeScroll)
                     {
                         Margin = new Thickness(10, 6, 10, 10),
@@ -342,6 +350,15 @@ namespace TeronClaudeCodeVS.Controls
 
                 WalkBlock(block, ctx);
             }
+        }
+
+        private static void OnCodeScrollPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (Keyboard.Modifiers != ModifierKeys.Shift) return;
+
+            var scroll = (ScrollViewer)sender;
+            scroll.ScrollToHorizontalOffset(scroll.HorizontalOffset - e.Delta);
+            e.Handled = true;
         }
 
         private static void WalkBlock(Block block, CodeBlockContext ctx)

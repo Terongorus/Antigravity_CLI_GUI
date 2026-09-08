@@ -74,11 +74,15 @@ namespace TeronClaudeCodeVS.ViewModels
         /// </summary>
         public static List<ChatMessageViewModel> Load(string workingDirectory, string sessionId)
         {
-            List<ChatMessageViewModel> messages = [];
-
             string? path = FindTranscriptPath(workingDirectory, sessionId);
-            if (path == null)
-                return messages;
+            return path == null ? [] : LoadFromPath(path);
+        }
+
+        /// <summary>Same as <see cref="Load"/>, but against an already-resolved transcript path - the
+        /// seam tests use to run this against a captured fixture file.</summary>
+        internal static List<ChatMessageViewModel> LoadFromPath(string path)
+        {
+            List<ChatMessageViewModel> messages = [];
 
             Dictionary<string, ToolCallViewModel> toolCallsByUseId = [];
 
@@ -101,6 +105,13 @@ namespace TeronClaudeCodeVS.ViewModels
                 if (root.Value<bool?>("isSidechain") == true)
                     continue;
 
+                // Auto-compaction writes its "This session is being continued from a previous
+                // conversation..." recap as a synthetic `type:"user"` line so the CLI itself can
+                // feed it back in as context - it was never typed by the user and must not be
+                // replayed as a real chat bubble.
+                if (root.Value<bool?>("isCompactSummary") == true)
+                    continue;
+
                 string? type = root.Value<string>("type");
                 if (type != "user" && type != "assistant")
                     continue;
@@ -115,8 +126,21 @@ namespace TeronClaudeCodeVS.ViewModels
                     if (TryApplyToolResults(content, toolCallsByUseId))
                         continue;
 
-                    // A genuine new user prompt ends whatever assistant turn was in progress.
+                    // A genuine new user prompt ends whatever assistant turn was in progress -
+                    // true even for the CLI-synthesized lines skipped just below, so whatever real
+                    // reply follows starts its own fresh bubble instead of silently appending onto
+                    // an unrelated, much earlier one.
                     currentAssistantMessage = null;
+
+                    // Found live 2026-09-08: two more kinds of CLI bookkeeping that were slipping
+                    // through as if a human had typed them, alongside a real /compact run -
+                    // "isMeta" (the CLI's own auto-sent "Continue from where you left off." nudge
+                    // when a session resumes with no new human input) and the raw
+                    // <local-command-caveat>/<command-name>/<local-command-stdout> wrapper it
+                    // writes for a slash command run locally (e.g. /compact itself). Neither was
+                    // ever typed by a human and neither belongs in the transcript as a chat bubble.
+                    if (root.Value<bool?>("isMeta") == true || IsLocalCommandWrapper(content))
+                        continue;
 
                     ChatMessageViewModel userMsg = new(ChatRole.User);
                     BuildBlocks(userMsg, content, toolCallsByUseId);
@@ -140,6 +164,17 @@ namespace TeronClaudeCodeVS.ViewModels
             messages.RemoveAll(m => m.Blocks.Count == 0);
             return messages;
         }
+
+        /// <summary>True for the CLI's own raw wrapper around a locally-run slash command (the
+        /// caveat notice, the `&lt;command-name&gt;` echo, and the `&lt;local-command-stdout&gt;`
+        /// result) - always a bare string content, never the array shape a real typed prompt uses,
+        /// which is what makes this a safe structural check rather than a guess at wording.</summary>
+        private static bool IsLocalCommandWrapper(JToken content)
+            => content.Type == JTokenType.String
+               && content.Value<string>() is string s
+               && (s.StartsWith("<local-command-caveat>", StringComparison.Ordinal)
+                   || s.StartsWith("<command-name>", StringComparison.Ordinal)
+                   || s.StartsWith("<local-command-stdout>", StringComparison.Ordinal));
 
         /// <summary>
         /// If every item in a "user" line's content array is a tool_result, attaches each to its

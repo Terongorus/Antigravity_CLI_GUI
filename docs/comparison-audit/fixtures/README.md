@@ -28,6 +28,25 @@ built. A throwaway session in a scratch directory was given two turns:
 further trivial turn. It is the evidence for the fork half: a different session id, the first turn
 kept intact, the BETA turn gone, and the original left untouched.
 
+## `transcript-replay-compact-and-local-command.jsonl`
+
+Captured 2026-09-08, CLI v2.1.261, from a real dogfooding session in a scratch C# project (not this
+repo) - a short back-and-forth with two real `/compact` runs triggered mid-session. Fixture for
+`TranscriptReplayTests`, kept because of exactly what it demonstrates a naive reader gets wrong:
+
+* the CLI's own `isCompactSummary` recap line ("This session is being continued from a previous
+  conversation…") is a synthetic `type:"user"` record, not something a human typed;
+* running `/compact` locally also writes three more `type:"user"` records with **no** `isMeta` or
+  `isCompactSummary` flag at all - `<local-command-caveat>…</local-command-caveat>`,
+  `<command-name>/compact</command-name>…`, and `<local-command-stdout>Compacted </local-command-stdout>`
+  - distinguishable only structurally: their `message.content` is a bare string, never the array
+  shape a real typed prompt uses;
+* resuming with no new human input gets the CLI's own auto-sent "Continue from where you left off."
+  nudge, which **is** flagged `isMeta:true`;
+* and a real human prompt ("What?", "List the working directory's contents") sent immediately after
+  one of the above must still come through - proof the fix filters specific record shapes, not
+  "anything near a compact".
+
 ## `agents-*.json` — FEAT-9, `claude agents --json --all`
 
 Both are verbatim output from the real CLI (`--version` prints 2.1.246; the binary's own embedded

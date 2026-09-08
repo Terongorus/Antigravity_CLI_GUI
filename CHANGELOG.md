@@ -3,6 +3,33 @@
 All notable changes to the **Claude Code for Visual Studio** extension will be documented in
 this file.
 
+## [0.7.2] - 2026-09-08
+
+Another live bug-fixing round, this time centered on the context-usage indicator, session-resume
+fidelity, and the whimsical "working" status line.
+
+* **Fixed the context-usage/compact button never appearing, at any threshold.** The lookup used to
+  find the CLI's context-window size for the current model didn't match how the CLI actually keys
+  that data, so the indicator was permanently hidden regardless of your configured threshold.
+  Fixed, and the "Show Threshold (%)" option now also applies immediately to an already-open chat
+  panel instead of requiring a reopen.
+* **Fixed Shift+Wheel horizontal scroll not working in code/output blocks, diff previews (both the
+  Edit-file tool card and the permission-prompt preview), and the raw-output panel** - previously
+  only supported on attachment previews.
+* **Fixed a resumed session (especially a long one) sometimes loading scrolled to the top instead
+  of the bottom**, and fixed the transcript occasionally jiggling/jumping while you were scrolled
+  up reading history mid-turn.
+* **The whimsical "working" status line now animates a proper typewriter effect** - each phrase
+  types in character by character, with the pause before the next phrase starting only once typing
+  finishes - and its icon now blinks continuously while work is actually in progress (including
+  while compacting), replacing a one-shot "Done" flash that added little. Also fixed the line
+  itself occasionally appearing on a brand-new session with nothing actually happening.
+* **Fixed resuming a session after running `/compact` showing raw CLI bookkeeping text as if it
+  were a real chat message** - the compact summary, the command echo, and the "Continue from where
+  you left off." auto-nudge no longer leak into the visible transcript.
+* New commissioned welcome-screen art for a brand-new empty session, replacing the old plain
+  accent-mark badge.
+
 ## [0.7.1] - 2026-09-06
 
 Live bug-fixing round, mostly bugs found while dogfooding across two different projects in the
