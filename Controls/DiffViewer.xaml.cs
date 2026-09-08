@@ -47,6 +47,18 @@ namespace TeronClaudeCodeVS.Controls
         {
             if (e.Delta == 0) return;
             e.Handled = true;
+
+            // Shift+wheel is the horizontal-scroll convention - WPF has no built-in support for it,
+            // and Scroller's own vertical scrolling is disabled anyway (nothing for a plain wheel
+            // tick to do here but re-bubble for the outer transcript). Handle it here instead of
+            // letting it re-bubble too, or the outer ChatScrollViewer would force a vertical scroll
+            // on the same tick a user is trying to scroll this diff horizontally.
+            if (Keyboard.Modifiers == ModifierKeys.Shift)
+            {
+                Scroller.ScrollToHorizontalOffset(Scroller.HorizontalOffset - e.Delta);
+                return;
+            }
+
             MouseWheelEventArgs args = new(e.MouseDevice, e.Timestamp, e.Delta)
                 { RoutedEvent = MouseWheelEvent };
             RaiseEvent(args);

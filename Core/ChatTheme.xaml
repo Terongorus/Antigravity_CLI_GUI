@@ -76,6 +76,14 @@
     <sys:Double x:Key="FontSizeComposerChip">12</sys:Double>
 
     <!--
+        Another deliberate exception, same reasoning as FontSizeComposerChip above: Kaloyan's own
+        live-tested preference 2026-09-08 for the whimsical "Percolating…"-style working-verb line
+        above the composer - Chrome (11) read as too small for a line meant to draw the eye while
+        a turn is in flight. Scoped to that one line only.
+    -->
+    <sys:Double x:Key="FontSizeWorkingVerb">18</sys:Double>
+
+    <!--
         Glyph metrics. These are NOT part of the type scale: they size icon characters
         (arrows, crosses, the search lens) inside fixed-size buttons, so they are geometry that
         happens to be expressed in points. Kept separate so the two-size rule above stays honest.

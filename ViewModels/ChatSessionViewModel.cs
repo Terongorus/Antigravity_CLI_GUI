@@ -331,6 +331,13 @@ namespace TeronClaudeCodeVS.ViewModels
         public event EventHandler? PermissionRequestAdded;
 
         /// <summary>
+        /// Raised on the UI thread after <see cref="ResumeSessionEntry"/> repopulates <see cref="Messages"/>
+        /// from a transcript replay. The chat view should force-scroll to the bottom (the newest
+        /// message, matching where a resumed conversation continues from) once layout has caught up.
+        /// </summary>
+        public event EventHandler? SessionResumed;
+
+        /// <summary>
         /// Raised on the UI thread when a plan is ready for review, carrying the CLI-written plan
         /// file's path. The chat view opens it as a real native VS document tab (see
         /// Core/ClaudeCodeChatControl.xaml.cs) - matching the real extension's behavior of
@@ -507,6 +514,7 @@ namespace TeronClaudeCodeVS.ViewModels
                     {
                         _elapsedTimer.Stop();
                         ElapsedText = "";
+                        ResetWorkingVerb();
 
                         // A model/permission-mode/thinking-level change made while a turn was in
                         // flight was deferred by RestartIfIdle rather than dropped - apply it now
@@ -550,6 +558,181 @@ namespace TeronClaudeCodeVS.ViewModels
             get => _statusText;
             private set => SetField(ref _statusText, value);
         }
+
+        // Matches the official extension's own "Percolating…"/"Marinating…" indicator (read
+        // directly from its installed webview bundle, 2026-09-08: a ~79-word list of whimsical
+        // present-participle verbs, one picked at random and re-rolled on a short-then-settling
+        // cadence - 2s, then 3s, then every 5s). Confirmed live 2026-09-08 that baseline renders
+        // this as its OWN standalone line directly above the composer (icon + word, no elapsed
+        // time or token count attached) - a first attempt wired it into StatusText instead, which
+        // only ever feeds the composed top status strip (elapsed/tokens/tasks), so it showed up
+        // mashed into the wrong line in the wrong place. WorkingVerbText below is that separate,
+        // dedicated line; StatusText keeps its own plain "Working…"/"Compacting…" wording as before.
+        private static readonly string[] s_workingVerbs =
+        [
+            "Accomplishing", "Actioning", "Actualizing", "Baking", "Booping", "Brewing",
+            "Calculating", "Cerebrating", "Channelling", "Churning", "Clauding", "Coalescing",
+            "Cogitating", "Computing", "Combobulating", "Concocting", "Considering",
+            "Contemplating", "Cooking", "Crafting", "Creating", "Crunching", "Deciphering",
+            "Deliberating", "Determining", "Discombobulating", "Doing", "Effecting",
+            "Elucidating", "Enchanting", "Envisioning", "Finagling", "Flibbertigibbeting",
+            "Forging", "Forming", "Frolicking", "Generating", "Germinating", "Hatching",
+            "Herding", "Honking", "Ideating", "Imagining", "Incubating", "Inferring",
+            "Manifesting", "Marinating", "Meandering", "Moseying", "Mulling", "Mustering",
+            "Musing", "Noodling", "Percolating", "Perusing", "Philosophising", "Pontificating",
+            "Pondering", "Processing", "Puttering", "Puzzling", "Reticulating", "Ruminating",
+            "Scheming", "Schlepping", "Shimmying", "Simmering", "Smooshing", "Spelunking",
+            "Spinning", "Stewing", "Sussing", "Synthesizing", "Thinking", "Tinkering",
+            "Transmuting", "Unfurling", "Unravelling", "Vibing", "Wandering", "Whirring",
+            "Wibbling", "Working", "Wrangling",
+        ];
+
+        // Hold time after each word is fully typed, before the next one starts - same 2s/3s/5s…
+        // schedule as before, just measured from "typing finished" rather than "word changed",
+        // now that typing itself takes visible time.
+        private static readonly int[] s_workingVerbHoldMs = [2000, 3000];
+        private const int WorkingVerbTypeIntervalMs = 35;
+        private static readonly Random s_workingVerbRng = new();
+
+        private readonly DispatcherTimer _workingVerbTimer;
+        private string _workingVerbTargetText = "";
+        private int _workingVerbRevealLength;
+        private bool _workingVerbIsTyping;
+        private int _workingVerbChangeStep;
+        private int _workingVerbHoldRemainingMs;
+
+        private string? _workingVerbText;
+
+        /// <summary>Null when there's nothing to show; otherwise the current whimsical verb
+        /// ("Percolating…") for the dedicated status line directly above the composer - see
+        /// ClaudeCodeChatControl.xaml's WorkingVerbBorder.</summary>
+        public string? WorkingVerbText
+        {
+            get => _workingVerbText;
+            private set => SetField(ref _workingVerbText, value);
+        }
+
+        private bool _isWorkingVerbIconAlt;
+
+        /// <summary>Toggles on a fixed cadence (see <see cref="WorkingVerbBlinkIntervalMs"/>) for as
+        /// long as the working-verb line is showing - swaps WorkingVerbBorder's icon between
+        /// Icon_ClaudeLogoPending and Icon_ClaudeLogoDone to read as a slow "blink" while work is in
+        /// progress. Kaloyan's own call (2026-09-08): the previous one-shot "Done" flash after a
+        /// successful turn added a state that appeared for ~1.4s and vanished with no real purpose -
+        /// removed outright rather than kept as a separate concept, and this same icon pair repurposed
+        /// into a purely decorative animation instead.</summary>
+        public bool IsWorkingVerbIconAlt
+        {
+            get => _isWorkingVerbIconAlt;
+            private set => SetField(ref _isWorkingVerbIconAlt, value);
+        }
+
+        private const int WorkingVerbBlinkIntervalMs = 500;
+        private int _workingVerbBlinkElapsedMs;
+
+        /// <summary>Sets StatusText to "Working…" as before, and (re)starts the independent
+        /// whimsical-verb line's type-then-hold cadence - use this everywhere the status line
+        /// should read "Working…"-ish instead of assigning StatusText directly.</summary>
+        private void SetWorkingStatus()
+        {
+            StatusText = "Working…";
+            _workingVerbBlinkElapsedMs = 0;
+            IsWorkingVerbIconAlt = false;
+            _workingVerbChangeStep = 0;
+            BeginTypingNewWorkingVerb();
+            _workingVerbTimer.Start();
+        }
+
+        /// <summary>Unconditionally clears the whimsical working-verb line and stops its timer.
+        /// Found live 2026-09-08: a brand-new, never-touched session could open already showing a
+        /// whimsical word ("Computing…") with no turn in flight. <see cref="SetWorkingStatus"/> is
+        /// called from several permission/tool-response paths that assume a turn is already
+        /// underway (IsBusy already true) rather than starting one themselves - if IsBusy was ever
+        /// false at that moment (a genuine edge case, e.g. a stale/late event arriving after the
+        /// turn it belonged to had already ended), the timer would start ticking with nothing to
+        /// ever flip IsBusy true-&gt;false again and clear it, since that clear previously lived only
+        /// in the IsBusy setter's own change-triggered branch. <see cref="StartSession"/> now also
+        /// calls this unconditionally, so a (re)started session can never inherit leftover
+        /// working-verb state from whatever came before it, regardless of the original leak's exact
+        /// cause.</summary>
+        private void ResetWorkingVerb()
+        {
+            _workingVerbTimer.Stop();
+            WorkingVerbText = null;
+            _workingVerbBlinkElapsedMs = 0;
+            IsWorkingVerbIconAlt = false;
+        }
+
+        private void BeginTypingNewWorkingVerb()
+        {
+            _workingVerbTargetText = PickWorkingVerb();
+            _workingVerbRevealLength = 0;
+            _workingVerbIsTyping = true;
+            WorkingVerbText = "";
+        }
+
+        /// <summary>Pins the working-verb line to a fixed, already-fully-typed string (currently
+        /// only "Compacting…") instead of the usual random-word rotation, while keeping
+        /// <see cref="_workingVerbTimer"/> running so the icon's blink (see
+        /// <see cref="IsWorkingVerbIconAlt"/>) keeps animating. Found live 2026-09-08: the original
+        /// "compacting" handler stopped the timer outright and set the text directly, which froze
+        /// the icon on whatever frame it happened to be on - the same class of bug could recur for
+        /// any future fixed-text status, hence this shared helper rather than a one-off inline fix.
+        /// <see cref="_workingVerbHoldRemainingMs"/> is set far longer than any real compaction
+        /// takes so the hold-expired branch in <see cref="AdvanceWorkingVerb"/> never fires and swaps
+        /// away to a random word mid-compact; the turn's own next real status change (a fresh
+        /// <see cref="SetWorkingStatus"/> call, or <see cref="ResetWorkingVerb"/> once the turn ends)
+        /// is what actually supersedes it.</summary>
+        private void ShowFixedWorkingVerbText(string text)
+        {
+            _workingVerbTargetText = text;
+            _workingVerbRevealLength = text.Length;
+            _workingVerbIsTyping = false;
+            _workingVerbHoldRemainingMs = int.MaxValue;
+            WorkingVerbText = text;
+            if (!_workingVerbTimer.IsEnabled)
+                _workingVerbTimer.Start();
+        }
+
+        /// <summary>
+        /// The whimsical line's own state machine, one character-reveal tick (35ms) at a time:
+        /// typing the current word in, then holding it fully typed for a beat, then picking the
+        /// next one and typing that in - repeating for as long as <see cref="_workingVerbTimer"/>
+        /// keeps running. Kaloyan's own ask (2026-09-08): a plain instant word-swap read as too
+        /// abrupt, baseline's real webview bundle layers a similar per-character reveal on top of
+        /// its own random-verb list (see this class's own note by s_workingVerbs).
+        /// </summary>
+        private void AdvanceWorkingVerb()
+        {
+            _workingVerbBlinkElapsedMs += WorkingVerbTypeIntervalMs;
+            if (_workingVerbBlinkElapsedMs >= WorkingVerbBlinkIntervalMs)
+            {
+                _workingVerbBlinkElapsedMs = 0;
+                IsWorkingVerbIconAlt = !IsWorkingVerbIconAlt;
+            }
+
+            if (_workingVerbIsTyping)
+            {
+                _workingVerbRevealLength++;
+                WorkingVerbText = _workingVerbTargetText.Substring(0, _workingVerbRevealLength);
+                if (_workingVerbRevealLength < _workingVerbTargetText.Length) return;
+
+                _workingVerbIsTyping = false;
+                _workingVerbHoldRemainingMs = _workingVerbChangeStep < s_workingVerbHoldMs.Length
+                    ? s_workingVerbHoldMs[_workingVerbChangeStep]
+                    : 5000;
+                return;
+            }
+
+            _workingVerbHoldRemainingMs -= WorkingVerbTypeIntervalMs;
+            if (_workingVerbHoldRemainingMs > 0) return;
+
+            _workingVerbChangeStep++;
+            BeginTypingNewWorkingVerb();
+        }
+
+        private static string PickWorkingVerb()
+            => s_workingVerbs[s_workingVerbRng.Next(s_workingVerbs.Length)] + "…";
 
         private bool _isRawOutputVisible;
         public bool IsRawOutputVisible
@@ -608,6 +791,12 @@ namespace TeronClaudeCodeVS.ViewModels
         private int _currentContextTokens;
         private int _contextWindowSize;
         private int _maxOutputTokensSize;
+
+        /// <summary>The CLI's own resolved model id from `system:init` (e.g. "claude-sonnet-..."),
+        /// captured in <see cref="OnSessionInitialized"/>. `result.modelUsage` is keyed by this same
+        /// full id - NOT by <see cref="SelectedModel"/>.Value, which is either null ("Default") or a
+        /// short CLI alias ("sonnet"/"opus"/...) that never appears as a key in that dictionary.</summary>
+        private string? _resolvedModelId;
 
         private int EffectiveContextWindow => Math.Max(0, _contextWindowSize - _maxOutputTokensSize - 13_000);
 
@@ -672,6 +861,8 @@ namespace TeronClaudeCodeVS.ViewModels
                     foreach (ToolCallViewModel call in RunningToolCalls)
                         call.RefreshElapsedText();
                 }, _dispatcher);
+            _workingVerbTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(WorkingVerbTypeIntervalMs),
+                DispatcherPriority.Normal, (s, e) => AdvanceWorkingVerb(), _dispatcher);
             _selectedModel = Models[0];
             // "Accept Edits" is the extension's own startup default (not the CLI's) - selected by
             // value rather than array index so reordering PermissionModes above can't silently
@@ -776,6 +967,12 @@ namespace TeronClaudeCodeVS.ViewModels
             StopSessionCore();
             ResetTurnState();
 
+            // A new process means any straggler result the OLD process still owed us (see
+            // StopSessionAsync/_interruptResultPending) is now moot - it can never arrive on this
+            // new one, and the flag must not linger to wrongly suppress this new session's own
+            // first real turn completion.
+            _interruptResultPending = false;
+
             (int Port, string AuthToken)? ideServer;
             if (ClaudeCodePackage.Instance == null)
             {
@@ -807,6 +1004,7 @@ namespace TeronClaudeCodeVS.ViewModels
                 fork, forkAt);
 
             IsBusy = false;
+            ResetWorkingVerb();
             StatusText = "Starting Claude Code…";
         }
 
@@ -847,6 +1045,11 @@ namespace TeronClaudeCodeVS.ViewModels
                 var response = await _session.SendInterruptAsync().ConfigureAwait(true);
                 if (response != null)
                 {
+                    // The CLI always closes out a turn with exactly one `result` message, even one
+                    // it was just told to stop - that straggler is still coming and OnTurnCompleted
+                    // needs to know to treat it as the tail of the turn already shown as interrupted
+                    // here, not a brand-new failure.
+                    _interruptResultPending = true;
                     ResetTurnState();
                     IsBusy = false;
                     StatusText = "Stopped";
@@ -938,7 +1141,7 @@ namespace TeronClaudeCodeVS.ViewModels
             // still actively streaming. The next turn's own state gets set up naturally by
             // OnMessageStarted/EnsureAssistantMessage when its message_start actually arrives.
             IsBusy = true;
-            StatusText = "Working…";
+            SetWorkingStatus();
 
             await _session!.SendUserMessageAsync(textToSend, imagesBase64Png, files).ConfigureAwait(false);
         }
@@ -1016,6 +1219,9 @@ namespace TeronClaudeCodeVS.ViewModels
             if (!string.IsNullOrEmpty(init.SessionId))
                 _lastSessionId = init.SessionId;
 
+            if (!string.IsNullOrEmpty(init.Model))
+                _resolvedModelId = init.Model;
+
             // UX-5: the CLI emits commands in skill/source order, which reads as arbitrary in a
             // ~50-entry list. Sorting here rather than in the view keeps the palette and the "/"
             // autocomplete - which both bind this one collection - in the same order.
@@ -1040,10 +1246,11 @@ namespace TeronClaudeCodeVS.ViewModels
             switch (status.Status)
             {
                 case "requesting":
-                    StatusText = "Working…";
+                    SetWorkingStatus();
                     break;
                 case "compacting":
                     StatusText = "Compacting…";
+                    ShowFixedWorkingVerbText("Compacting…");
                     break;
                 case string s when !string.IsNullOrEmpty(s):
                     StatusText = s;
@@ -1055,6 +1262,17 @@ namespace TeronClaudeCodeVS.ViewModels
         {
             string freed = e.TokensFreed.HasValue ? FormatTokenCount(e.TokensFreed.Value) : "some";
             AddSystemNotice($"Compacted chat · {e.Trigger} · {freed} tokens freed", isError: false);
+
+            // Found live 2026-09-07: the context-usage button kept showing the pre-compact
+            // percentage after a successful compact, since nothing here ever touched
+            // _currentContextTokens - only OnAssistantSnapshot's per-round usage did, and compacting
+            // doesn't run a new API round by itself. post_tokens is exactly "how much context the
+            // next request will carry" post-compact, the same quantity _currentContextTokens tracks.
+            if (e.PostTokens.HasValue)
+            {
+                _currentContextTokens = (int)e.PostTokens.Value;
+                RaiseContextUsageChanged();
+            }
         }
 
         /// <summary>
@@ -1680,7 +1898,7 @@ namespace TeronClaudeCodeVS.ViewModels
             if (!string.IsNullOrEmpty(e.ToolUseId) && _toolCallsByUseId.TryGetValue(e.ToolUseId!, out var call))
                 call.Status = allow ? ToolCallStatus.Running : ToolCallStatus.Error;
 
-            StatusText = "Working…";
+            SetWorkingStatus();
 
             JObject? updatedInput = null;
             if (allow)
@@ -1779,7 +1997,7 @@ namespace TeronClaudeCodeVS.ViewModels
                 _sessionPermissions.Add("MultiEdit");
             }
 
-            StatusText = "Working…";
+            SetWorkingStatus();
             await _session.RespondToPermissionAsync(e.RequestId, allow, updatedInput: allow ? e.Input : null, denyMessage: denyMessage).ConfigureAwait(false);
         }
 
@@ -1792,7 +2010,7 @@ namespace TeronClaudeCodeVS.ViewModels
                 AskUserQuestionViewModel vm = new(e.Questions,
                     async answers =>
                     {
-                        StatusText = "Working…";
+                        SetWorkingStatus();
                         if (_session != null)
                             await _session.RespondToAskUserQuestionAsync(e.RequestId, answers).ConfigureAwait(false);
                     });
@@ -1815,20 +2033,61 @@ namespace TeronClaudeCodeVS.ViewModels
             if (!string.IsNullOrEmpty(e.ToolUseId) && _toolCallsByUseId.TryGetValue(e.ToolUseId!, out var call))
                 call.Status = allow ? ToolCallStatus.Running : ToolCallStatus.Error;
 
-            StatusText = "Working…";
+            SetWorkingStatus();
             await _session.RespondToPermissionAsync(e.RequestId, allow, allow ? e.Input : null, denyMessage)
                 .ConfigureAwait(false);
         }
 
+        /// <summary>Set by <see cref="StopSessionAsync"/> right before it declares "Stopped" -
+        /// consumed once by <see cref="OnTurnCompleted"/> to recognize the guaranteed straggler
+        /// `result` message for that same turn.</summary>
+        private bool _interruptResultPending;
+
         private void OnTurnCompleted(ResultMessage result)
         {
+            // Found live 2026-09-07: clicking Stop already shows "⏹ Response interrupted", but the
+            // CLI still closes out that turn with its own final `result` a moment later - arriving
+            // as IsError=true with an internal, not-meant-for-display diagnostic string in
+            // ResultText (seen live: "[ede_diagnostic] result_type=user last_content_type=n/a
+            // stop_reason=tool_use"). Left unhandled, that straggler re-litigated the same turn as a
+            // brand-new failure: a fresh empty message bubble showing that raw CLI internal string
+            // as if it were a real reply, a "Resend" prompt for a turn the user intentionally
+            // stopped, and StatusText flipping from "Stopped" back to "Error" right after. Session
+            // bookkeeping (cost/tokens/context usage/history) is still real and worth keeping - only
+            // the confusing chat-visible additions are skipped.
+            if (_interruptResultPending)
+            {
+                _interruptResultPending = false;
+
+                if (_resolvedModelId != null && result.ModelUsage.TryGetValue(_resolvedModelId, out ModelUsageInfo? interruptedUsage))
+                {
+                    _contextWindowSize = interruptedUsage.ContextWindow;
+                    _maxOutputTokensSize = interruptedUsage.MaxOutputTokens;
+                    RaiseContextUsageChanged();
+                }
+
+                string? interruptedSid = _session?.LastSessionId ?? result.SessionId;
+                if (!string.IsNullOrEmpty(interruptedSid))
+                    SaveOrUpdateSession(interruptedSid!);
+
+                _sessionTurns++;
+                _sessionCostUsd += result.TotalCostUsd ?? 0;
+                _sessionInputTokens += result.InputTokens ?? 0;
+                _sessionOutputTokens += result.OutputTokens ?? 0;
+                OnPropertyChanged(nameof(SessionUsageText));
+                OnPropertyChanged(nameof(SessionTokensShortText));
+                return;
+            }
+
             EnsureAssistantMessage();
 
-            // Context-window indicator: keyed by the currently selected model, falling back to
-            // whatever was last known if this result doesn't carry an entry for it (matches the
-            // official VS Code extension's own fallback behavior) - a model-fallback mid-session
-            // could otherwise leave these at zero for one turn.
-            if (SelectedModel.Value != null && result.ModelUsage.TryGetValue(SelectedModel.Value, out ModelUsageInfo? modelUsage))
+            // Context-window indicator: keyed by the CLI's own resolved model id (see
+            // _resolvedModelId), falling back to whatever was last known if this result doesn't
+            // carry an entry for it (matches the official VS Code extension's own fallback
+            // behavior) - a model-fallback mid-session could otherwise leave these at zero for one
+            // turn. SelectedModel.Value is NOT usable here - it's null for "Default" and a short
+            // CLI alias otherwise, never the full id that keys this dictionary.
+            if (_resolvedModelId != null && result.ModelUsage.TryGetValue(_resolvedModelId, out ModelUsageInfo? modelUsage))
             {
                 _contextWindowSize = modelUsage.ContextWindow;
                 _maxOutputTokensSize = modelUsage.MaxOutputTokens;
@@ -1850,9 +2109,10 @@ namespace TeronClaudeCodeVS.ViewModels
                 _currentAssistantMessage.Blocks.Add(new TextBlockViewModel { Text = msg });
             }
 
+            bool isRateLimit = false;
             if (result.IsError)
             {
-                AddRetryNotice(
+                isRateLimit = AddRetryNotice(
                     new[] { result.ResultText }.Concat(result.Errors),
                     "This turn didn't complete. Your message is still here - you can try it again.");
             }
@@ -1861,7 +2121,7 @@ namespace TeronClaudeCodeVS.ViewModels
                 _lastSentText = null;
             }
 
-            List<string> parts = [result.IsError ? "Error" : "Done", FormatDuration(result.DurationMs)];
+            List<string> parts = [result.IsError ? (isRateLimit ? "Rate limited" : "Error") : "Done", FormatDuration(result.DurationMs)];
 
             if (result.TotalCostUsd.HasValue)
                 parts.Add($"${result.TotalCostUsd.Value:0.0000}");
@@ -1891,7 +2151,7 @@ namespace TeronClaudeCodeVS.ViewModels
             if (result.QueuedTurnCount == 0)
             {
                 IsBusy = false;
-                StatusText = result.IsError ? "Error" : "Ready";
+                StatusText = result.IsError ? (isRateLimit ? "Rate limited" : "Error") : "Ready";
             }
         }
 
@@ -1938,17 +2198,24 @@ namespace TeronClaudeCodeVS.ViewModels
         /// instead of relying on the CLI's own resume fidelity for every failure mode (a genuine
         /// quota rejection may never even reach the API to be logged in the first place).
         /// </summary>
-        private void AddRetryNotice(IEnumerable<string?> rateLimitHintSources, string fallbackText)
+        /// <returns>True if this was recognized as a rate/usage-limit rejection rather than a generic
+        /// failure - callers use this to avoid also labeling it a plain "Error", which reads as
+        /// contradicting the calmer explanation just shown for a known, expected CLI condition.</returns>
+        private bool AddRetryNotice(IEnumerable<string?> rateLimitHintSources, string fallbackText)
         {
-            if (_lastSentText == null || _currentAssistantMessage == null) return;
+            if (_lastSentText == null || _currentAssistantMessage == null) return false;
 
             string retryText = _lastSentText;
-            bool looksLikeRateLimit = rateLimitHintSources.Any(ContainsRateLimitHint);
-            string notice = looksLikeRateLimit && AccountUsage.HasRateLimitData
-                ? $"You've hit your usage limit · resets {AccountUsage.SessionResetLabel}"
+            bool looksLikeRateLimit = rateLimitHintSources.Any(ContainsRateLimitHint) && AccountUsage.HasRateLimitData;
+            // SessionResetLabel already reads "Resets in 2h" (see AccountUsageViewModel.FormatResetLabel) -
+            // found live 2026-09-08 that prepending another "resets" here produced the doubled
+            // "You've hit your usage limit · resets Resets in 2h".
+            string notice = looksLikeRateLimit
+                ? $"You've hit your usage limit · {AccountUsage.SessionResetLabel}"
                 : fallbackText;
 
             _currentAssistantMessage.Blocks.Add(new RetryNoticeViewModel(notice, () => _ = SendMessageAsync(retryText)));
+            return looksLikeRateLimit;
         }
 
         private static bool ContainsRateLimitHint(string? text)
@@ -2515,6 +2782,7 @@ namespace TeronClaudeCodeVS.ViewModels
                 RawOutput.Add($"[transcript replay error] {ex.GetType().Name}: {ex.Message}");
             }
 
+            SessionResumed?.Invoke(this, EventArgs.Empty);
             StartSession();
         }
 

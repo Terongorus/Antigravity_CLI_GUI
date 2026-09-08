@@ -1,4 +1,5 @@
 ﻿using Microsoft.VisualStudio.Shell;
+using System;
 using System.ComponentModel;
 using System.ComponentModel.Design;
 using System.Drawing.Design;
@@ -123,6 +124,24 @@ namespace TeronClaudeCodeVS.Core
         /// <summary>RESUPPLY throttle state - last self-update check, ISO 8601 UTC, empty if never checked.</summary>
         [Browsable(false)]
         public string LastUpdateCheckUtc { get; set; } = "";
+
+        /// <summary>
+        /// Raised when the user clicks OK/Apply in Tools &gt; Options. Every setting here otherwise
+        /// only gets read once, in <c>ClaudeCodeChatControl.OnLoaded</c> - fine for most of them
+        /// (they only matter for the next session start anyway), but found live 2026-09-07 to be a
+        /// real bug for "Show Threshold (%)": changing it while a chat panel is already open and
+        /// showing the context-usage button did nothing at all until the tool window was fully
+        /// closed and reopened. A subscriber re-reads whatever it needs to react to live instead of
+        /// every setting being pushed through this indiscriminately.
+        /// </summary>
+        public static event EventHandler? SettingsApplied;
+
+        protected override void OnApply(PageApplyEventArgs args)
+        {
+            base.OnApply(args);
+            if (args.ApplyBehavior == ApplyKind.Apply)
+                SettingsApplied?.Invoke(this, EventArgs.Empty);
+        }
 
         // ─── Type converters for dropdown lists ────────────────────────────────
 

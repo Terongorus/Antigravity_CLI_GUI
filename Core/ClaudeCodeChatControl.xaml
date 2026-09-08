@@ -4,6 +4,7 @@
              xmlns:vs="clr-namespace:Microsoft.VisualStudio.Shell;assembly=Microsoft.VisualStudio.Shell.15.0"
              xmlns:vm="clr-namespace:TeronClaudeCodeVS.ViewModels"
              xmlns:controls="clr-namespace:TeronClaudeCodeVS.Controls"
+             xmlns:svgc="http://sharpvectors.codeplex.com/svgc/"
              Background="{DynamicResource {x:Static vs:VsBrushes.ToolWindowBackgroundKey}}"
              Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"
              MinWidth="220">
@@ -1251,6 +1252,7 @@
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- ===================== Header ===================== -->
@@ -1433,17 +1435,25 @@
                 A new session opened onto a blank rectangle, which reads as "not loaded" rather
                 than "ready". Baseline fills the same space with a wordmark, a mascot and a tip.
                 We do not ship baseline's pixel-art robot - that is their brand asset, not ours -
-                so this uses the same accent mark the header already carries, plus the one thing a
+                Kaloyan's own commissioned art (Resources/welcome-art-{light,dark}.svg, 2026-09-08)
+                replaces the plain accent-mark badge this used to show, plus the one thing a
                 first-time user most needs to know: that @ and / exist.
             -->
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="320"
                         Margin="24" IsHitTestVisible="False"
                         Visibility="{Binding Messages.Count, Converter={StaticResource CountToVisibilityConverter}}">
-                <Border Width="40" Height="40" CornerRadius="{StaticResource RadiusCard}"
-                        Background="{StaticResource ClaudeAccentBrush}" HorizontalAlignment="Center">
-                    <Path Data="{StaticResource Icon_ClaudeLogo}" Fill="White" Stretch="Uniform"
-                          Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
+                <Grid Width="260" Height="112" HorizontalAlignment="Center">
+                    <!--
+                        Suffixes here mean the VS theme they're FOR (not the icon's own color, the
+                        way IconGeometries.xaml's _light/_dark pairs work) - Kaloyan's own naming
+                        for this pair, confirmed explicitly 2026-09-08 rather than assumed from that
+                        other convention. Visibility toggled in code-behind's RefreshThemedIcons.
+                    -->
+                    <svgc:SvgViewbox x:Name="WelcomeArtLight" Stretch="Uniform"
+                                     Source="pack://application:,,,/TeronClaudeCodeVS;component/Resources/welcome-art-light.svg"/>
+                    <svgc:SvgViewbox x:Name="WelcomeArtDark" Stretch="Uniform"
+                                     Source="pack://application:,,,/TeronClaudeCodeVS;component/Resources/welcome-art-dark.svg"/>
+                </Grid>
                 <!--
                     The AutomationId sits on this TextBlock rather than on the panel: WPF Panels
                     are not in the UIA control view, so an id there is invisible to the harness
@@ -1868,8 +1878,42 @@
             </Grid>
         </Border>
 
+        <!-- ===================== Working-verb line ===================== -->
+        <!-- Matches baseline's own standalone "Percolating…"/"Marinating…" line, read directly
+             from its installed webview bundle (2026-09-08): its own icon+text row sitting right
+             above the composer, independent of the elapsed/tokens/tasks status strip up in Row 1 -
+             a first attempt wired this into that top strip instead, which was visibly wrong. -->
+        <Border x:Name="WorkingVerbBorder" Grid.Row="5" Padding="10,0,10,4"
+                Visibility="{Binding WorkingVerbText, Converter={StaticResource NullToVisibilityConverter}}">
+            <StackPanel Orientation="Horizontal">
+                <!-- Blinks between the two icon states on a fixed cadence for as long as work is in
+                     progress (see ChatSessionViewModel.IsWorkingVerbIconAlt) - purely decorative,
+                     no longer tied to turn completion (the old one-shot post-turn "Done" flash was
+                     removed 2026-09-08 as a pointless state that appeared and vanished with no
+                     purpose). -->
+                <Image Width="18" Height="18" Margin="10,10,3,10" VerticalAlignment="Center"
+                       AutomationProperties.AutomationId="WorkingVerbIcon">
+                    <Image.Style>
+                        <Style TargetType="Image">
+                            <Setter Property="Source" Value="{StaticResource Icon_ClaudeLogoPending}"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsWorkingVerbIconAlt}" Value="True">
+                                    <Setter Property="Source" Value="{StaticResource Icon_ClaudeLogoDone}"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Image.Style>
+                </Image>
+                <TextBlock Text="{Binding WorkingVerbText}" FontStyle="Normal" FontWeight="Bold" Opacity="0.8"
+                           FontSize="{StaticResource FontSizeWorkingVerb}"
+                           Foreground="{DynamicResource {x:Static vs:VsBrushes.ToolWindowTextKey}}"
+                           AutomationProperties.AutomationId="WorkingVerbText"
+                           Margin="10,10,0,10"/>
+            </StackPanel>
+        </Border>
+
         <!-- ===================== Input area ===================== -->
-        <Border x:Name="InputAreaBorder" Grid.Row="5" Margin="10,6,10,10" Background="{StaticResource CardBackgroundBrush}"
+        <Border x:Name="InputAreaBorder" Grid.Row="6" Margin="10,6,10,10" Background="{StaticResource CardBackgroundBrush}"
                 BorderThickness="1" CornerRadius="{StaticResource RadiusCard}"
                 AllowDrop="True" DragEnter="OnInputAreaDragEnter" DragLeave="OnInputAreaDragLeave"
                 PreviewDragOver="OnInputAreaDragOver" Drop="OnInputAreaDrop"

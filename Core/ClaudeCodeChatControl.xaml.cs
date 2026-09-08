@@ -52,6 +52,7 @@ namespace TeronClaudeCodeVS.Core
             Unloaded += OnUnloaded;
             _vm.PropertyChanged += OnViewModelPropertyChanged;
             _vm.PermissionRequestAdded += OnPermissionRequestAdded;
+            _vm.SessionResumed += OnSessionResumed;
             _vm.PlanFileReadyToOpen += OnPlanFileReadyToOpen;
             _vm.InputPrefillRequested += OnInputPrefillRequested;
 
@@ -150,6 +151,8 @@ namespace TeronClaudeCodeVS.Core
                     options.SwitchModelsAutomatically, options.FallbackModel);
             }
 
+            ClaudeCodeOptionsPage.SettingsApplied += OnSettingsApplied;
+
             // UX-6: resolved before the first await in this handler. The call touches DTE, which
             // is main-thread-only; WPF raises Loaded on the UI thread and nothing above this point
             // awaits, so we are on it. The analyzer cannot see that through an async void handler,
@@ -162,6 +165,10 @@ namespace TeronClaudeCodeVS.Core
                 UIElement.MouseWheelEvent,
                 new MouseWheelEventHandler(OnMessageListMouseWheel),
                 handledEventsToo: true);
+
+            // Same missing WPF convention as the code-block snippet boxes (MarkdownRenderer) and
+            // the diff snippet boxes (DiffViewer) - Shift+wheel has to be wired up explicitly.
+            RawOutputScrollViewer.PreviewMouseWheel += OnHorizontalScrollPreviewMouseWheel;
 
             _vm.RawOutput.Add($"[cwd-diag] OnLoaded firing, ClaudeCodePackage.Instance={(ClaudeCodePackage.Instance == null ? "NULL" : "set")}");
             _solutionDirectory = await VsIdeToolHandlers.GetWorkingDirectoryAsync(line => _vm.RawOutput.Add(line));
@@ -210,6 +217,12 @@ namespace TeronClaudeCodeVS.Core
             NewSessionIconPath.Data = (Geometry)FindResource(isDark ? "Icon_NewSession_Light" : "Icon_NewSession_Dark");
             SettingsIconPath.Data = (Geometry)FindResource(isDark ? "Icon_Settings_Light" : "Icon_Settings_Dark");
             RefreshMicIcon();
+
+            // Unlike every _light/_dark pair above, these two are named for the VS theme they're
+            // FOR, not the art's own color (Kaloyan's own naming, confirmed 2026-09-08) - so this
+            // one is NOT inverted like the others.
+            WelcomeArtLight.Visibility = isDark ? Visibility.Collapsed : Visibility.Visible;
+            WelcomeArtDark.Visibility = isDark ? Visibility.Visible : Visibility.Collapsed;
         }
 
         /// <summary>The mic icon has a second axis besides theme - recording or not - so it is
@@ -225,7 +238,20 @@ namespace TeronClaudeCodeVS.Core
 
         /// <summary>Real teardown for when the tool window itself is actually closing - called
         /// from <see cref="ClaudeCodeToolWindow"/>'s Dispose override, never from OnUnloaded.</summary>
-        public void DisposeSession() => _vm.Dispose();
+        public void DisposeSession()
+        {
+            ClaudeCodeOptionsPage.SettingsApplied -= OnSettingsApplied;
+            _vm.Dispose();
+        }
+
+        /// <summary>See <see cref="ClaudeCodeOptionsPage.SettingsApplied"/> - only the settings that
+        /// can meaningfully change for an already-open, already-running chat panel get re-read here.</summary>
+        private void OnSettingsApplied(object sender, EventArgs e)
+        {
+            var options = ClaudeCodePackage.Instance?.GetOptions();
+            if (options != null)
+                _vm.ContextIndicatorThresholdPercent = options.ContextIndicatorThresholdPercent;
+        }
 
         /// <summary>Called from <see cref="Commands.ClaudeCodeCommand"/> after the Ctrl+Alt+Y
         /// shortcut activates the tool window. <see cref="OnLoaded"/> only refocuses the input on
@@ -425,6 +451,43 @@ namespace TeronClaudeCodeVS.Core
         {
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded,
                 new Action(() => ChatScrollViewer.ScrollToEnd()));
+        }
+
+        /// <summary>
+        /// Found live 2026-09-07: resuming a long session (hundreds of transcript messages added to
+        /// <c>Messages</c> in one synchronous burst, see ResumeSessionEntry) left the transcript
+        /// scrolled to the top instead of the newest message. A single deferred ScrollToEnd() at
+        /// Loaded priority helped but didn't fully fix it: when the last message is itself taller
+        /// than the viewport, that one call landed at its TOP rather than its true end - MessageList's
+        /// virtualization (Recycling, Pixel scroll unit) hadn't yet fully measured that last item at
+        /// the moment the callback ran.
+        /// <para>
+        /// A follow-up attempt re-issued ScrollToEnd() on every LayoutUpdated tick until the extent
+        /// stopped changing, capped at 60 ticks. Found live 2026-09-08 against this repo's own real,
+        /// months-long dev session transcript that this still isn't enough - the panel only realizes
+        /// a bounded number of containers per layout pass, so for a transcript this large the extent
+        /// estimate keeps climbing for far longer than any reasonable tick budget, and it landed
+        /// barely past the very first message. Fighting virtualization's own incremental realization
+        /// with repeated partial nudges doesn't scale; forcing one full, accurate realization instead
+        /// does. <c>IsVirtualizing</c> is turned off just long enough for a single real layout pass to
+        /// measure every item for real, ScrollToEnd() is then exact by construction, and virtualization
+        /// is restored immediately after so ordinary scrolling/streaming performance is unaffected -
+        /// restoring it doesn't move the already-correct scroll position, since the panel only needs
+        /// to virtualize AROUND the current viewport from that point on. The one-time full-measure
+        /// cost is the accepted trade for a "jump to the end of a huge history" action, not something
+        /// that happens during normal use.
+        /// </para>
+        /// </summary>
+        private void OnSessionResumed(object sender, EventArgs e)
+        {
+            _isFollowingBottom = true;
+
+            VirtualizingPanel.SetIsVirtualizing(MessageList, false);
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+            {
+                ChatScrollViewer.ScrollToEnd();
+                VirtualizingPanel.SetIsVirtualizing(MessageList, true);
+            }));
         }
 #pragma warning restore VSTHRD001, VSTHRD110
 
@@ -2016,7 +2079,14 @@ namespace TeronClaudeCodeVS.Core
 
         private void OnMessageListMouseWheel(object sender, MouseWheelEventArgs e)
         {
-            if (e.Delta == 0) return;
+            // Shift+wheel is the horizontal-scroll convention a nested code/output snippet box
+            // relies on (see MarkdownRenderer's codeScroll) - this class handler is registered
+            // handledEventsToo:true (needed so a nested ScrollViewer that swallows a wheel tick it
+            // can't actually act on doesn't also block the outer transcript from scrolling), which
+            // means it fires and would force a vertical scroll here even after the snippet box
+            // already consumed the same tick to scroll itself horizontally. Bowing out on Shift
+            // leaves that tick to the snippet box alone.
+            if (e.Delta == 0 || Keyboard.Modifiers == ModifierKeys.Shift) return;
             e.Handled = true;
             ChatScrollViewer.ScrollToVerticalOffset(ChatScrollViewer.VerticalOffset - e.Delta);
         }
@@ -2030,17 +2100,51 @@ namespace TeronClaudeCodeVS.Core
             // ExtentHeightChange alone. Found live 2026-09-06: resizing the tool window snapped the
             // transcript to the bottom exactly like new content had just arrived, with nothing new
             // to show. A genuine new-message growth never touches the viewport's own width.
-            if (e.ViewportWidthChange != 0) return;
+            //
+            // Same reasoning applies to a HEIGHT change - found live 2026-09-07: the session-status
+            // strip (background running tasks) shares this Grid with ChatScrollViewer, so every task
+            // it adds/removes grows or shrinks the strip and, in the same layout pass, shrinks or
+            // grows the chat's own viewport. MessageList's virtualization (Recycling, Pixel scroll
+            // unit) re-estimates its extent whenever the viewport size changes, and that estimate
+            // wobble alone can report a spurious ExtentHeightChange with no real content having
+            // changed - a genuine new-message growth never touches the viewport's own height either.
+            if (e.ViewportWidthChange != 0 || e.ViewportHeightChange != 0) return;
 
-            if (e.ExtentHeightChange > 0)
+            // A real user scroll (wheel/drag/keyboard) changes VerticalOffset with no ExtentHeightChange
+            // in the same event - recompute the sticky "should we follow new content" bit only here,
+            // rather than re-deriving position from every growth event. Found live 2026-09-07: with
+            // MessageList's virtualization (Recycling, Pixel scroll unit), an off-screen realized
+            // item's estimated height self-correcting can fire an ExtentHeightChange whose reported
+            // VerticalOffset/ExtentHeight momentarily satisfy the old "was at bottom" geometry check
+            // even while genuinely scrolled up mid-transcript - snapping the view to the end and
+            // making the message the user was reading un-readable. Tracking the bit only on real
+            // user-driven offset changes means a content-growth event can no longer manufacture a
+            // false "was at bottom" from its own possibly-noisy numbers.
+            if (e.ExtentHeightChange == 0)
             {
-                bool wasAtBottom = e.VerticalOffset + e.ViewportHeight >= e.ExtentHeight - e.ExtentHeightChange - 1;
-                if (wasAtBottom)
-                    ChatScrollViewer.ScrollToEnd();
+                if (e.VerticalChange != 0)
+                    _isFollowingBottom = e.VerticalOffset + e.ViewportHeight >= e.ExtentHeight - 1;
+                return;
             }
+
+            if (_isFollowingBottom)
+                ChatScrollViewer.ScrollToEnd();
         }
 
         private bool _suppressAutoScroll;
+        private bool _isFollowingBottom = true;
+
+        /// <summary>Shared by every plain horizontally-scrolling box in this control that has no
+        /// other reason to intercept mouse wheel input itself (see MarkdownRenderer's codeScroll and
+        /// DiffViewer's Scroller for the two that needed their own variant instead).</summary>
+        private static void OnHorizontalScrollPreviewMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (Keyboard.Modifiers != ModifierKeys.Shift) return;
+
+            var scroll = (ScrollViewer)sender;
+            scroll.ScrollToHorizontalOffset(scroll.HorizontalOffset - e.Delta);
+            e.Handled = true;
+        }
 
         /// <summary>
         /// A tool-call/thinking-block Expander toggle grows or shrinks its card, which the

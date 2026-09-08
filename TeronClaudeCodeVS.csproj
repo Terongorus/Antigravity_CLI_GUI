@@ -37,6 +37,11 @@
     <PackageReference Include="Community.VisualStudio.Toolkit.17" Version="17.0.551" />
     <PackageReference Include="Community.VisualStudio.Toolkit.Analyzers" Version="1.0.551" PrivateAssets="all" />
     <PackageReference Include="Markdig.Wpf.Signed" Version="0.5.0.1" />
+    <!-- Renders the welcome-art-{light,dark}.svg empty-state illustrations directly at runtime -
+         those are ~200KB of dense vector path data each, far past what IconGeometries.xaml's
+         hand-ported-Geometry convention can reasonably cover (that convention stays for the small,
+         single/few-path icons it already handles). -->
+    <PackageReference Include="SharpVectors.Reloaded" Version="1.8.5" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="Microsoft.VisualStudio.SDK" Version="17.14.40265" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="18.5.40034" />
@@ -82,10 +87,6 @@
       <IncludeInVSIX>true</IncludeInVSIX>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="Resources\logo_icon.png">
-      <IncludeInVSIX>true</IncludeInVSIX>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
   </ItemGroup>
 
   <ItemGroup>
@@ -93,6 +94,13 @@
       <ResourceName>Menus.ctmenu</ResourceName>
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </VSCTCompile>
+  </ItemGroup>
+
+  <!-- Embedded as WPF Resource (BAML resource stream), loadable via a relative pack URI from
+       within this same assembly's XAML - see the empty-state art in ClaudeCodeChatControl.xaml. -->
+  <ItemGroup>
+    <Resource Include="Resources\welcome-art-light.svg" />
+    <Resource Include="Resources\welcome-art-dark.svg" />
   </ItemGroup>
 
 </Project>
