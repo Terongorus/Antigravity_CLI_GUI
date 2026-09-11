@@ -3,6 +3,21 @@
 All notable changes to the **Claude Code for Visual Studio** extension will be documented in
 this file.
 
+## [0.7.4] - 2026-09-11
+
+* **Fixed the whimsical "working" status line sometimes cycling forever after the session had
+  actually gone idle** (the overall status correctly read "Ready" the whole time). Its cleanup
+  only ever ran as a side effect of a separate busy/idle flag flipping, which a turn that started
+  in an unusual way (e.g. a resumed session auto-continuing) could complete without ever
+  triggering - the line is now cleared directly and unconditionally at every point the session
+  actually goes idle, not only through that side effect.
+* **Fixed a real markdown link in a chat reply looking clickable (underlined, styled as a link)
+  but doing nothing when clicked, and not even showing a hand cursor on hover.** The markdown
+  renderer wires every link up to its own internal command rather than leaving it as a plain
+  navigable link, and with nothing in the app bound to handle that command, WPF silently disabled
+  the link outright. The app now handles that command directly, so links actually open in your
+  browser.
+
 ## [0.7.3] - 2026-09-09
 
 * **Fixed self-update never detecting a newer version — both the automatic check and the manual

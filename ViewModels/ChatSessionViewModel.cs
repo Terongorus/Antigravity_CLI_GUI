@@ -1232,6 +1232,10 @@ namespace TeronClaudeCodeVS.ViewModels
                          .OrderBy(c => c, StringComparer.OrdinalIgnoreCase))
                 SlashCommands.Add(cmd);
 
+            // Defensive, same reasoning as StartSession()'s own unconditional ResetWorkingVerb():
+            // a resumed/restarted session re-initializing should never coexist with a working-verb
+            // line left ticking from before this process existed.
+            ResetWorkingVerb();
             StatusText = "Ready";
         }
 
@@ -2150,7 +2154,16 @@ namespace TeronClaudeCodeVS.ViewModels
             // finishes, so the UI doesn't flash "Ready" between queued turns.
             if (result.QueuedTurnCount == 0)
             {
+                // ResetWorkingVerb() also lives inside IsBusy's own true->false change branch, but
+                // that's a no-op if IsBusy was never actually true for this turn - e.g. a session
+                // resume auto-continuing a turn left over from before this process started, which
+                // reaches "requesting" (and starts the verb line) without ever going through
+                // SendMessageAsync's IsBusy = true. Found live 2026-09-09: the verb line kept
+                // cycling forever after such a turn completed, with StatusText correctly reading
+                // "Ready" the whole time. Called unconditionally here so completion can never leave
+                // it running regardless of how the turn started.
                 IsBusy = false;
+                ResetWorkingVerb();
                 StatusText = result.IsError ? (isRateLimit ? "Rate limited" : "Error") : "Ready";
             }
         }
@@ -2176,6 +2189,11 @@ namespace TeronClaudeCodeVS.ViewModels
 
         private void OnProcessExited()
         {
+            // Unconditional for the same reason OnTurnCompleted's own reset is: a verb line left
+            // running by a turn that reached "requesting" without IsBusy ever being true would
+            // otherwise survive the process dying too, not just a clean completion.
+            ResetWorkingVerb();
+
             if (IsBusy)
             {
                 EnsureAssistantMessage();

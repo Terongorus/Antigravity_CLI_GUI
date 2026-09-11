@@ -82,12 +82,20 @@ namespace TeronClaudeCodeVS.Controls
         // of pulled from ChatTheme.xaml). Selected via ThemeService.Instance.IsDarkTheme - reading
         // that property alone never touches the real VS SDK theme API (only Refresh() does, called
         // once from ClaudeCodeChatControl.OnLoaded), so this stays safe under the xUnit tests too.
-        private static readonly Geometry s_copyIconLight = Geometry.Parse("F1 m13 20a5.006 5.006 0 0 0 5-5v-8.757a3.972 3.972 0 0 0 -1.172-2.829l-2.242-2.242a3.972 3.972 0 0 0 -2.829-1.172h-4.757a5.006 5.006 0 0 0 -5 5v10a5.006 5.006 0 0 0 5 5zm-9-5v-10a3 3 0 0 1 3-3s4.919 .014 5 .024v1.976a2 2 0 0 0 2 2h1.976c.01 .081 .024 9 .024 9a3 3 0 0 1 -3 3h-6a3 3 0 0 1 -3-3zm18-7v11a5.006 5.006 0 0 1 -5 5h-9a1 1 0 0 1 0-2h9a3 3 0 0 0 3-3v-11a1 1 0 0 1 2 0z");
-        private static readonly Geometry s_copyIconDark = Geometry.Parse("F1 m13 4a1 1 0 0 0 1 1h3.966a2.981 2.981 0 0 0 -.811-1.728l-2.284-2.359a3.011 3.011 0 0 0 -1.871-.884zm-2 0v-4h-4a5.006 5.006 0 0 0 -5 5v10a5.006 5.006 0 0 0 5 5h6a5.006 5.006 0 0 0 5-5v-8h-4a3 3 0 0 1 -3-3zm6 20h-9a1 1 0 0 1 0-2h9a3 3 0 0 0 3-3v-11a1 1 0 0 1 2 0v11a5.006 5.006 0 0 1 -5 5z");
-        private static readonly Geometry s_doneIconLight = Geometry.Parse("F1 M19,0H5A5.006,5.006,0,0,0,0,5V19a5.006,5.006,0,0,0,5,5H19a5.006,5.006,0,0,0,5-5V5A5.006,5.006,0,0,0,19,0Zm3,19a3,3,0,0,1-3,3H5a3,3,0,0,1-3-3V5A3,3,0,0,1,5,2H19a3,3,0,0,1,3,3Z M9.333,15.919,5.414,12A1,1,0,0,0,4,12H4a1,1,0,0,0,0,1.414l3.919,3.919a2,2,0,0,0,2.829,0L20,8.081a1,1,0,0,0,0-1.414h0a1,1,0,0,0-1.414,0Z");
-        private static readonly Geometry s_doneIconDark = Geometry.Parse("F1 M405.333,0H106.667C47.786,0.071,0.071,47.786,0,106.667v298.667C0.071,464.214,47.786,511.93,106.667,512h298.667 C464.214,511.93,511.93,464.214,512,405.333V106.667C511.93,47.786,464.214,0.071,405.333,0z M426.667,172.352L229.248,369.771 c-16.659,16.666-43.674,16.671-60.34,0.012c-0.004-0.004-0.008-0.008-0.012-0.012l-83.563-83.541 c-8.348-8.348-8.348-21.882,0-30.229s21.882-8.348,30.229,0l83.541,83.541l197.44-197.419c8.348-8.318,21.858-8.294,30.176,0.053 C435.038,150.524,435.014,164.034,426.667,172.352z");
-        private static readonly Geometry s_warningIconLight = Geometry.Parse("F1 M11,13V7c0-.55,.45-1,1-1s1,.45,1,1v6c0,.55-.45,1-1,1s-1-.45-1-1Zm1,2c-.83,0-1.5,.67-1.5,1.5s.67,1.5,1.5,1.5,1.5-.67,1.5-1.5-.67-1.5-1.5-1.5Zm11.58,4.88c-.7,1.35-2.17,2.12-4.01,2.12H4.44c-1.85,0-3.31-.77-4.01-2.12-.71-1.36-.51-3.1,.5-4.56L8.97,2.6c.71-1.02,1.83-1.6,3.03-1.6s2.32,.58,3,1.57l8.08,12.77c1.01,1.46,1.2,3.19,.49,4.54Zm-2.15-3.42s-.02-.02-.02-.04L13.34,3.67c-.29-.41-.79-.67-1.34-.67s-1.05,.26-1.36,.71L2.59,16.42c-.62,.88-.76,1.84-.4,2.53,.35,.68,1.15,1.05,2.24,1.05h15.12c1.09,0,1.89-.37,2.24-1.05,.36-.69,.22-1.65-.37-2.49Z");
-        private static readonly Geometry s_warningIconDark = Geometry.Parse("F1 M23.08,15.33L15,2.57c-.68-.98-1.81-1.57-3-1.57s-2.32,.58-3.03,1.6L.93,15.31c-1.02,1.46-1.21,3.21-.5,4.56,.7,1.35,2.17,2.12,4.01,2.12h15.12c1.85,0,3.31-.77,4.01-2.12,.7-1.35,.51-3.09-.49-4.54ZM11,7c0-.55,.45-1,1-1s1,.45,1,1v6c0,.55-.45,1-1,1s-1-.45-1-1V7Zm1,12c-.83,0-1.5-.67-1.5-1.5s.67-1.5,1.5-1.5,1.5,.67,1.5,1.5-.67,1.5-1.5,1.5Z");
+        // Frozen for the same reason the brushes above are: Geometry is a Freezable, thread-affine
+        // to whichever thread first touches it until frozen. Found live 2026-09-09 as a real,
+        // order-dependent xUnit flake - a WPF-control-constructing test running before an unrelated
+        // MarkdownRenderer.Render() call on a different thread made THAT render silently fail and
+        // fall back to plain text (Render()'s own outer try/catch swallows it), losing a real
+        // markdown link's Hyperlink along with everything else in the fallback.
+        private static readonly Geometry s_copyIconLight = FrozenGeometry("F1 m13 20a5.006 5.006 0 0 0 5-5v-8.757a3.972 3.972 0 0 0 -1.172-2.829l-2.242-2.242a3.972 3.972 0 0 0 -2.829-1.172h-4.757a5.006 5.006 0 0 0 -5 5v10a5.006 5.006 0 0 0 5 5zm-9-5v-10a3 3 0 0 1 3-3s4.919 .014 5 .024v1.976a2 2 0 0 0 2 2h1.976c.01 .081 .024 9 .024 9a3 3 0 0 1 -3 3h-6a3 3 0 0 1 -3-3zm18-7v11a5.006 5.006 0 0 1 -5 5h-9a1 1 0 0 1 0-2h9a3 3 0 0 0 3-3v-11a1 1 0 0 1 2 0z");
+        private static readonly Geometry s_copyIconDark = FrozenGeometry("F1 m13 4a1 1 0 0 0 1 1h3.966a2.981 2.981 0 0 0 -.811-1.728l-2.284-2.359a3.011 3.011 0 0 0 -1.871-.884zm-2 0v-4h-4a5.006 5.006 0 0 0 -5 5v10a5.006 5.006 0 0 0 5 5h6a5.006 5.006 0 0 0 5-5v-8h-4a3 3 0 0 1 -3-3zm6 20h-9a1 1 0 0 1 0-2h9a3 3 0 0 0 3-3v-11a1 1 0 0 1 2 0v11a5.006 5.006 0 0 1 -5 5z");
+        private static readonly Geometry s_doneIconLight = FrozenGeometry("F1 M19,0H5A5.006,5.006,0,0,0,0,5V19a5.006,5.006,0,0,0,5,5H19a5.006,5.006,0,0,0,5-5V5A5.006,5.006,0,0,0,19,0Zm3,19a3,3,0,0,1-3,3H5a3,3,0,0,1-3-3V5A3,3,0,0,1,5,2H19a3,3,0,0,1,3,3Z M9.333,15.919,5.414,12A1,1,0,0,0,4,12H4a1,1,0,0,0,0,1.414l3.919,3.919a2,2,0,0,0,2.829,0L20,8.081a1,1,0,0,0,0-1.414h0a1,1,0,0,0-1.414,0Z");
+        private static readonly Geometry s_doneIconDark = FrozenGeometry("F1 M405.333,0H106.667C47.786,0.071,0.071,47.786,0,106.667v298.667C0.071,464.214,47.786,511.93,106.667,512h298.667 C464.214,511.93,511.93,464.214,512,405.333V106.667C511.93,47.786,464.214,0.071,405.333,0z M426.667,172.352L229.248,369.771 c-16.659,16.666-43.674,16.671-60.34,0.012c-0.004-0.004-0.008-0.008-0.012-0.012l-83.563-83.541 c-8.348-8.348-8.348-21.882,0-30.229s21.882-8.348,30.229,0l83.541,83.541l197.44-197.419c8.348-8.318,21.858-8.294,30.176,0.053 C435.038,150.524,435.014,164.034,426.667,172.352z");
+        private static readonly Geometry s_warningIconLight = FrozenGeometry("F1 M11,13V7c0-.55,.45-1,1-1s1,.45,1,1v6c0,.55-.45,1-1,1s-1-.45-1-1Zm1,2c-.83,0-1.5,.67-1.5,1.5s.67,1.5,1.5,1.5,1.5-.67,1.5-1.5-.67-1.5-1.5-1.5Zm11.58,4.88c-.7,1.35-2.17,2.12-4.01,2.12H4.44c-1.85,0-3.31-.77-4.01-2.12-.71-1.36-.51-3.1,.5-4.56L8.97,2.6c.71-1.02,1.83-1.6,3.03-1.6s2.32,.58,3,1.57l8.08,12.77c1.01,1.46,1.2,3.19,.49,4.54Zm-2.15-3.42s-.02-.02-.02-.04L13.34,3.67c-.29-.41-.79-.67-1.34-.67s-1.05,.26-1.36,.71L2.59,16.42c-.62,.88-.76,1.84-.4,2.53,.35,.68,1.15,1.05,2.24,1.05h15.12c1.09,0,1.89-.37,2.24-1.05,.36-.69,.22-1.65-.37-2.49Z");
+        private static readonly Geometry s_warningIconDark = FrozenGeometry("F1 M23.08,15.33L15,2.57c-.68-.98-1.81-1.57-3-1.57s-2.32,.58-3.03,1.6L.93,15.31c-1.02,1.46-1.21,3.21-.5,4.56,.7,1.35,2.17,2.12,4.01,2.12h15.12c1.85,0,3.31-.77,4.01-2.12,.7-1.35,.51-3.09-.49-4.54ZM11,7c0-.55,.45-1,1-1s1,.45,1,1v6c0,.55-.45,1-1,1s-1-.45-1-1V7Zm1,12c-.83,0-1.5-.67-1.5-1.5s.67-1.5,1.5-1.5,1.5,.67,1.5,1.5-.67,1.5-1.5,1.5Z");
+
+        private static Geometry FrozenGeometry(string data) { Geometry g = Geometry.Parse(data); g.Freeze(); return g; }
 
         private static Geometry CopyIcon => TeronClaudeCodeVS.Controls.ThemeService.Instance.IsDarkTheme ? s_copyIconLight : s_copyIconDark;
         private static Geometry DoneIcon => TeronClaudeCodeVS.Controls.ThemeService.Instance.IsDarkTheme ? s_doneIconLight : s_doneIconDark;
@@ -632,8 +640,23 @@ namespace TeronClaudeCodeVS.Controls
         /// default WPF Button chrome, which was called out live 2026-09-06 as producing a
         /// noticeably rectangular button (unequal horizontal/vertical padding around the icon) with
         /// a crude hard-edged hover rectangle.
+        /// <para>
+        /// Built fresh per call rather than cached in a static field (found 2026-09-11, root-caused
+        /// via the exact exception rather than guessed): a <see cref="ControlTemplate"/> is a
+        /// <see cref="DependencyObject"/>, which is thread-affine - the first Button it's ever
+        /// assigned to seals it to that Dispatcher (Control.OnTemplateChanged -&gt;
+        /// FrameworkTemplate.Seal() -&gt; Dispatcher.VerifyAccess()), and assigning the same cached
+        /// instance to a Button on any other Dispatcher throws "The calling thread cannot access
+        /// this object because a different thread owns it." VS itself only ever has one UI thread,
+        /// so this never surfaced live, but it silently broke the test suite - each xUnit test that
+        /// renders a fenced code block runs on its own dedicated STA thread (see
+        /// Tests/Infrastructure/Sta.cs), so whichever test happened to run first "claimed" this
+        /// template, and every other test's PostProcess call swallowed the resulting exception in
+        /// its own catch, silently leaving that test's later code blocks unconverted - the exact
+        /// order-dependent MarkdownRendererTests flake documented 2026-09-09.
+        /// </para>
         /// </summary>
-        private static readonly ControlTemplate s_flatIconButtonTemplate = (ControlTemplate)XamlReader.Parse(
+        private static ControlTemplate BuildFlatIconButtonTemplate() => (ControlTemplate)XamlReader.Parse(
             """
             <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -664,7 +687,7 @@ namespace TeronClaudeCodeVS.Controls
                 Margin = new Thickness(0),
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
-                Template = s_flatIconButtonTemplate,
+                Template = BuildFlatIconButtonTemplate(),
                 Cursor = System.Windows.Input.Cursors.Hand,
                 ToolTip = "Copy this code block",
                 Focusable = false,
